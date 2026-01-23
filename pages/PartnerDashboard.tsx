@@ -1,539 +1,546 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useAuth } from '../App';
-import { getPartnerByUserId, getPartnerBookings, updateBookingStatus, EXPERIENCES, CONVERSATIONS, MESSAGES, getUserById, sendMessage, SUPPORT_PARTNER_ID, getPartnerById, addExperience, initializeSupportChat } from '../services/mockData';
-import { BookingStatus, PartnerStatus, UserRole } from '../types';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { Check, X, Plus, Calendar, Settings, DollarSign, Clock, MessageSquare, Phone, Mail, Filter, Search, Send, User, LifeBuoy, Image, MapPin, List, AlertTriangle, ExternalLink, Briefcase, CheckCircle } from 'lucide-react';
-import CalendarView from '../components/CalendarView';
-import ProfileModal from '../components/ProfileModal';
-import { useLocation } from 'react-router-dom';
 
-const PartnerDashboard = () => {
-  const { user } = useAuth();
-  const location = useLocation();
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useAuth } from '../App.tsx';
+import { 
+  getPartnerByUserId, 
+  getPartnerBookings, 
+  updateBookingStatus, 
+  EXPERIENCES, 
+  CONVERSATIONS, 
+  MESSAGES, 
+  getUserById, 
+  sendMessage, 
+  SUPPORT_PARTNER_ID, 
+  initializeSupportChat, 
+  markMessagesAsRead,
+  getPartnerById,
+  updateExperience,
+  addExperience
+} from '../services/mockData.ts';
+import { BookingStatus, Experience, UserRole } from '../types.ts';
+import { 
+  Plus, Calendar, List, Briefcase, TrendingUp, Star, 
+  LayoutDashboard, LogOut, Eye, RefreshCcw, ChevronRight, Edit3, X, MessageSquare, Search, Send, BarChart3, Clock, DollarSign, Percent, PieChart as PieIcon, AlertCircle, CheckCircle2, ArrowUpRight, ArrowLeft,
+  MapPin, Info, Check, XCircle
+} from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { useNavigate } from 'react-router-dom';
+import ExperienceEditModal from '../components/ExperienceEditModal.tsx';
+import ExperienceCreateModal from '../components/ExperienceCreateModal.tsx';
+
+interface PartnerDashboardProps {
+  isAdminView?: boolean;
+  overridePartnerId?: string;
+}
+
+const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ isAdminView = false, overridePartnerId }) => {
+  const { user, logout, refreshUnread } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('overview');
-  const [filterStatus, setFilterStatus] = useState<BookingStatus | 'ALL'>('ALL');
   const [bookings, setBookings] = useState<any[]>([]);
-  const [isCreating, setIsCreating] = useState(false);
-  const [newExperience, setNewExperience] = useState({
-    title: '', category: 'Aventure', description: '', price: '', duration: '', location: '', maxGuests: 10, included: '', image1: '', image2: ''
-  });
+  const [refresh, setRefresh] = useState(0);
+
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [editingExperience, setEditingExperience] = useState<Experience | null>(null);
+  const [selectedExperienceDetail, setSelectedExperienceDetail] = useState<Experience | null>(null);
 
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
-  const [refresh, setRefresh] = useState(0);
+  const [searchTerm, setSearchTerm] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Profile Modal State
-  const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [profileData, setProfileData] = useState<any>(null);
-  const [profileType, setProfileType] = useState<'CLIENT' | 'PARTNER'>('CLIENT');
-  
-  // Search state for messages
-  const [searchTerm, setSearchTerm] = useState('');
-  
-  // Handling "Contact Partner" from Experience Details
-  const [startChatPartnerId, setStartChatPartnerId] = useState<string | null>(null);
+  const partner = useMemo(() => {
+    if (isAdminView && overridePartnerId) return getPartnerById(overridePartnerId);
+    return user ? getPartnerByUserId(user.id) : null;
+  }, [isAdminView, overridePartnerId, user]);
 
-  const partner = user ? getPartnerByUserId(user.id) : null;
+  const metrics = useMemo(() => {
+    if (!partner) return null;
+    
+    const commissionRate = 15;
+    const totalBookings = bookings.length;
+    const confirmed = bookings.filter(b => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.COMPLETED).length;
+    const pending = bookings.filter(b => b.status === BookingStatus.PENDING).length;
+    const cancelled = bookings.filter(b => b.status === BookingStatus.CANCELLED).length;
+    
+    const grossRevenue = bookings
+      .filter(b => b.status !== BookingStatus.CANCELLED)
+      .reduce((acc, curr) => acc + curr.totalPrice, 0);
+      
+    const commissionAmount = grossRevenue * (commissionRate / 100);
+    
+    const partnerExps = EXPERIENCES.filter(e => e.partnerId === partner.id);
+    const totalViews = partnerExps.reduce((acc, curr) => acc + (curr.views || 0), 0);
+    const avgRating = partner.rating || 0;
 
-  // Initialize automated support chat
-  useEffect(() => {
-     if (user) {
-         initializeSupportChat(user);
-         setRefresh(prev => prev + 1);
-     }
-  }, [user]);
+    return { 
+      grossRevenue, 
+      commissionAmount, 
+      commissionRate,
+      totalViews, 
+      avgRating,
+      totalBookings,
+      counts: { confirmed, pending, cancelled },
+      statusSplit: [
+        { name: 'Confirmée', value: confirmed, color: '#10b981' },
+        { name: 'En attente', value: pending, color: '#f59e0b' },
+        { name: 'Annulée', value: cancelled, color: '#ef4444' }
+      ]
+    };
+  }, [bookings, partner]);
 
-  // Handle incoming location state (navigation from ExperienceDetails)
-  useEffect(() => {
-    if (location.state) {
-        if (location.state.activeTab) setActiveTab(location.state.activeTab);
-        if (location.state.startConversationWith) {
-             setStartChatPartnerId(location.state.startConversationWith);
-             setActiveTab('messages');
-        }
-        if (location.state.defaultMessage) setMessageInput(location.state.defaultMessage);
-    }
-  }, [location]);
+  const chartData = useMemo(() => [
+    { name: 'Sem 1', count: Math.floor(bookings.length * 0.2) },
+    { name: 'Sem 2', count: Math.floor(bookings.length * 0.4) },
+    { name: 'Sem 3', count: Math.floor(bookings.length * 0.3) },
+    { name: 'Sem 4', count: bookings.length },
+  ], [bookings.length]);
 
-  useEffect(() => {
-    if (partner) {
-      setBookings(getPartnerBookings(partner.id));
-    }
-  }, [partner]);
+  const partnerConversations = useMemo(() => {
+    if (!partner) return [];
+    return CONVERSATIONS.filter(c => c.partnerId === partner.id).map(c => ({
+      ...c,
+      client: getUserById(c.clientId),
+      unread: MESSAGES.filter(m => m.receiverId === (isAdminView ? 'SYSTEM' : user?.id) && m.senderId === c.clientId && !m.read).length
+    }));
+  }, [partner, refresh, user?.id, isAdminView]);
+
+  const filteredConversations = useMemo(() => {
+    return partnerConversations.filter(c => 
+      c.client?.name?.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [partnerConversations, searchTerm]);
+
+  const currentMessages = useMemo(() => {
+    const conv = partnerConversations.find(c => c.id === selectedConversationId);
+    if (!conv || !partner) return [];
+    const pUserId = partner.userId;
+    return MESSAGES.filter(m => (m.senderId === pUserId && m.receiverId === conv.clientId) || (m.senderId === conv.clientId && m.receiverId === pUserId))
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  }, [selectedConversationId, partnerConversations, partner, refresh]);
+
+  useEffect(() => { 
+    if (user && !isAdminView) initializeSupportChat(user); 
+  }, [user, isAdminView]);
+
+  useEffect(() => { 
+    if (partner) setBookings(getPartnerBookings(partner.id)); 
+  }, [partner?.id, refresh]);
 
   useEffect(() => {
     if (activeTab === 'messages' && selectedConversationId) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [activeTab, selectedConversationId, refresh, messageInput]);
+  }, [selectedConversationId, refresh, activeTab]);
 
-  if (!user) return null;
-  if (!partner) return <div className="p-10">Erreur: Profil partenaire non trouvé.</div>;
-  
-  // Handle Suspended Status
-  if (partner.status === PartnerStatus.SUSPENDU) {
-    return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center text-center p-4">
-        <div className="bg-red-100 p-4 rounded-full mb-4">
-          <AlertTriangle size={48} className="text-red-600" />
-        </div>
-        <h1 className="text-2xl font-bold mb-2 text-red-700">Compte Suspendu</h1>
-        <p className="text-gray-600 max-w-md mb-6">
-          Votre compte partenaire a été suspendu par l'administration. Vos annonces ne sont plus visibles sur la plateforme.
-        </p>
-        <div className="bg-white p-4 rounded-lg border shadow-sm max-w-md w-full text-left">
-           <h3 className="font-bold mb-2">Que faire ?</h3>
-           <p className="text-sm text-gray-500 mb-4">Veuillez contacter le support pour régulariser votre situation ou obtenir plus d'informations.</p>
-           <button className="w-full bg-brand-600 text-white py-2 rounded-lg font-bold hover:bg-brand-700">Contacter le Support</button>
-        </div>
-      </div>
-    );
-  }
-  
-  if (partner.status === PartnerStatus.EN_ATTENTE_VALIDATION) {
-    return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center text-center p-4">
-        <div className="bg-yellow-100 p-4 rounded-full mb-4">
-          <Clock size={48} className="text-yellow-600" />
-        </div>
-        <h1 className="text-2xl font-bold mb-2">Compte en attente de validation</h1>
-        <p className="text-gray-600 max-w-md">
-          Merci de votre inscription. L'équipe Tourisma examine actuellement votre dossier. 
-          Vous recevrez un email dès que votre compte sera activé.
-        </p>
-      </div>
-    );
-  }
+  if (!partner || !metrics) return null;
 
-  // Rest of the dashboard logic
-  const myExperiences = EXPERIENCES.filter(e => e.partnerId === partner.id);
-  const filteredBookings = filterStatus === 'ALL' ? bookings : bookings.filter(b => b.status === filterStatus);
-  const totalRevenue = bookings.filter(b => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.COMPLETED).reduce((acc, curr) => acc + curr.totalPrice, 0);
-  const commission = totalRevenue * 0.15; 
-  const netRevenue = totalRevenue - commission;
-  const data = [{ name: 'Lun', bookings: 2 }, { name: 'Mar', bookings: 1 }, { name: 'Mer', bookings: 3 }, { name: 'Jeu', bookings: 2 }, { name: 'Ven', bookings: 4 }, { name: 'Sam', bookings: 6 }, { name: 'Dim', bookings: 5 }];
-
-  const handleStatusUpdate = (bookingId: string, status: BookingStatus) => {
-    updateBookingStatus(bookingId, status);
-    if (partner) setBookings(getPartnerBookings(partner.id));
+  const handleTabChange = (tabId: string) => {
+    setActiveTab(tabId);
+    setSelectedExperienceDetail(null);
+    setSelectedConversationId(null);
   };
 
-  const handleCreateExperience = (e: React.FormEvent) => {
-    e.preventDefault();
-    const includedItems = newExperience.included.split(',').map(item => item.trim()).filter(i => i);
-    const images = [newExperience.image1 || 'https://images.unsplash.com/photo-1549488346-601267b2d556', newExperience.image2 || 'https://images.unsplash.com/photo-1536236688223-2895f54366fb'];
-    const exp = { id: `e${Date.now()}`, partnerId: partner.id, title: newExperience.title, category: newExperience.category, description: newExperience.description, price: parseInt(newExperience.price) || 0, duration: newExperience.duration, location: newExperience.location, images: images, maxGuests: newExperience.maxGuests, rating: 5.0, reviewsCount: 0, isActive: true, included: includedItems };
-    addExperience(exp);
-    setIsCreating(false);
-    setNewExperience({ title: '', category: 'Aventure', description: '', price: '', duration: '', location: '', maxGuests: 10, included: '', image1: '', image2: '' });
-    alert("Expérience créée avec succès !");
-  };
-  
-  const openProfile = (data: any, type: 'CLIENT' | 'PARTNER') => {
-      setProfileData(data);
-      setProfileType(type);
-      setProfileModalOpen(true);
+  const handleLogout = () => {
+    logout();
+    navigate('/');
   };
 
-  // Helper to resolve who the partner is talking to
-  const resolveChatPartner = (c: any) => {
-      if (c.partnerId === SUPPORT_PARTNER_ID) {
-          return {
-              type: 'SUPPORT',
-              name: 'Service Technique',
-              role: 'Support',
-              avatar: null,
-              data: { companyName: 'Service Technique', email: 'support@tourisma.ma', phone: '+212 500 000 000' }
-          };
-      }
-      
-      // If I am the Client in this conversation (contacting another partner)
-      if (c.clientId === user.id) {
-           const p = getPartnerById(c.partnerId);
-           return {
-               type: 'PARTNER',
-               name: p?.companyName || 'Partenaire',
-               role: 'Partenaire',
-               avatar: null, // Could use company logo
-               data: p
-           };
-      }
-
-      // Default: I am the Partner, other is Client
-      const client = getUserById(c.clientId);
-      return {
-          type: 'CLIENT',
-          name: client?.name || 'Client',
-          role: 'Client',
-          avatar: client?.avatarUrl,
-          data: client
-      };
+  const handleUpdateBooking = (id: string, status: BookingStatus) => {
+    updateBookingStatus(id, status);
+    setRefresh(r => r + 1);
   };
 
-  // Prepare conversations
-  const displayConversations = CONVERSATIONS.filter(c => 
-      c.partnerId === partner.id || 
-      (c.clientId === user.id) // Include where I am acting as client
-  ).map(c => ({ ...c, isVirtual: false }));
+  const handleSaveExperience = (id: string, updates: Partial<Experience>) => {
+    updateExperience(id, updates);
+    if (selectedExperienceDetail && selectedExperienceDetail.id === id) {
+       setSelectedExperienceDetail(prev => prev ? { ...prev, ...updates } : null);
+    }
+    setRefresh(r => r + 1);
+  };
 
-  const hasSupport = displayConversations.some(c => c.partnerId === SUPPORT_PARTNER_ID);
-  
-  // Handle creating a new virtual conversation if startChatPartnerId is set but not in list
-  if (startChatPartnerId) {
-      const exists = displayConversations.find(c => c.partnerId === startChatPartnerId && c.clientId === user.id);
-      if (!exists) {
-           const p = getPartnerById(startChatPartnerId);
-           if (p) {
-               displayConversations.unshift({
-                   id: `new_${startChatPartnerId}`,
-                   partnerId: startChatPartnerId,
-                   clientId: user.id,
-                   lastMessage: 'Démarrer la discussion',
-                   lastMessageDate: '',
-                   isVirtual: true
-               } as any);
-           }
-      }
-  }
-
-  // Auto-select conversation
-  useEffect(() => {
-     if (startChatPartnerId && !selectedConversationId) {
-         const targetId = displayConversations.find(c => c.partnerId === startChatPartnerId && c.clientId === user.id)?.id;
-         if (targetId) setSelectedConversationId(targetId);
-     }
-  }, [startChatPartnerId, displayConversations, selectedConversationId]);
-
-  // Filter conversations for search
-  const filteredConversations = displayConversations.filter(c => {
-      const chatPartner = resolveChatPartner(c);
-      return chatPartner.name.toLowerCase().includes(searchTerm.toLowerCase());
-  });
-
-  // Current conversation logic
-  const currentConversation = displayConversations.find(c => c.id === selectedConversationId);
-  const currentChatPartner = currentConversation ? resolveChatPartner(currentConversation) : null;
-  
-  // Identify the OTHER person ID for filtering messages
-  let otherPersonId = '';
-  if (currentConversation) {
-      if (currentConversation.partnerId === SUPPORT_PARTNER_ID) {
-          const p = getPartnerById(SUPPORT_PARTNER_ID);
-          if (p) otherPersonId = p.userId;
-      } else if (currentConversation.clientId === user.id) {
-          // I am client, other is partner
-           const p = getPartnerById(currentConversation.partnerId);
-           if (p) otherPersonId = p.userId;
-      } else {
-          // I am partner, other is client
-          // Client ID in conversation struct IS the user ID for clients
-          otherPersonId = currentConversation.clientId;
-      }
-  }
-
-  const currentMessages = (!currentConversation?.isVirtual && otherPersonId) ? MESSAGES.filter(m => (m.senderId === user.id && m.receiverId === otherPersonId) || (m.senderId === otherPersonId && m.receiverId === user.id)).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()) : [];
+  const handleCreateExperience = (newExp: Experience) => {
+    addExperience(newExp);
+    setRefresh(r => r + 1);
+  };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!messageInput.trim() || !selectedConversationId || !otherPersonId) return;
-
-    const result = sendMessage(user.id, otherPersonId, messageInput);
-    if (result && currentConversation?.isVirtual) setSelectedConversationId(result.id);
-    
+    const conv = partnerConversations.find(c => c.id === selectedConversationId);
+    if (!messageInput.trim() || !conv || !partner) return;
+    sendMessage(partner.userId, conv.clientId, messageInput);
     setMessageInput('');
-    setRefresh(prev => prev + 1);
+    setRefresh(r => r + 1);
   };
 
-  const startSupportChat = () => {
-    const existingConv = displayConversations.find(c => c.partnerId === SUPPORT_PARTNER_ID);
-    if (existingConv) setSelectedConversationId(existingConv.id);
-    setActiveTab('messages');
-  };
+  const tabs = [
+    { id: 'overview', label: "Performance", icon: TrendingUp },
+    { id: 'bookings', label: 'Mes Ventes', icon: List, badge: metrics.counts.pending },
+    { id: 'listings', label: 'Catalogue', icon: Briefcase },
+    { id: 'messages', label: 'Messages', icon: MessageSquare, badge: partnerConversations.reduce((acc, c) => acc + c.unread, 0) },
+  ];
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      <ProfileModal 
-        isOpen={profileModalOpen}
-        onClose={() => setProfileModalOpen(false)}
-        type={profileType}
-        data={profileData}
-      />
-      
-      <aside className="w-64 bg-white border-r hidden md:block fixed h-full z-10">
-        <div className="p-6">
-          <h2 className="text-lg font-bold text-gray-900">{partner.companyName}</h2>
-          <p className="text-xs text-green-600 font-medium uppercase mt-1 flex items-center gap-1"><CheckCircle size={10} /> Compte Vérifié</p>
-        </div>
-        <nav className="mt-4">
-          <button onClick={() => {setActiveTab('overview'); setIsCreating(false);}} className={`w-full text-left px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'overview' ? 'bg-brand-50 text-brand-600 border-r-2 border-brand-600' : 'text-gray-600 hover:bg-gray-50'}`}>Vue d'ensemble</button>
-          <button onClick={() => {setActiveTab('calendar'); setIsCreating(false);}} className={`w-full text-left px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'calendar' ? 'bg-brand-50 text-brand-600 border-r-2 border-brand-600' : 'text-gray-600 hover:bg-gray-50'}`}>Calendrier</button>
-          <button onClick={() => {setActiveTab('bookings'); setIsCreating(false);}} className={`w-full text-left px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'bookings' ? 'bg-brand-50 text-brand-600 border-r-2 border-brand-600' : 'text-gray-600 hover:bg-gray-50'}`}>Réservations</button>
-          <button onClick={() => {setActiveTab('listings'); setIsCreating(false);}} className={`w-full text-left px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'listings' ? 'bg-brand-50 text-brand-600 border-r-2 border-brand-600' : 'text-gray-600 hover:bg-gray-50'}`}>Mes Expériences</button>
-          <button onClick={() => {setActiveTab('messages'); setIsCreating(false);}} className={`w-full text-left px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'messages' ? 'bg-brand-50 text-brand-600 border-r-2 border-brand-600' : 'text-gray-600 hover:bg-gray-50'}`}>Messagerie</button>
-        </nav>
-      </aside>
-      
-      <main className="flex-1 p-8 md:ml-64 min-h-screen flex flex-col">
-        {activeTab === 'overview' && (
-          <div className="space-y-6">
-            <h1 className="text-2xl font-bold">Tableau de bord</h1>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white p-6 rounded-xl shadow-sm border"><div className="text-gray-500 text-sm mb-1">Chiffre d'affaires Brut</div><div className="text-2xl font-bold">{totalRevenue} MAD</div></div>
-              <div className="bg-white p-6 rounded-xl shadow-sm border"><div className="text-gray-500 text-sm mb-1">Commission (15%)</div><div className="text-2xl font-bold text-red-500">-{commission} MAD</div></div>
-              <div className="bg-white p-6 rounded-xl shadow-sm border"><div className="text-gray-500 text-sm mb-1">Net à percevoir</div><div className="text-2xl font-bold text-green-600">{netRevenue} MAD</div></div>
-            </div>
-            <div className="bg-white p-6 rounded-xl shadow-sm border"><h3 className="font-bold mb-4">Réservations cette semaine</h3><div className="h-64"><ResponsiveContainer width="100%" height="100%"><BarChart data={data}><XAxis dataKey="name" axisLine={false} tickLine={false} /><YAxis axisLine={false} tickLine={false} /><Tooltip /><Bar dataKey="bookings" fill="#e11d48" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div></div>
-          </div>
-        )}
-        
-        {activeTab === 'calendar' && (
-          <div className="space-y-6">
-             <div className="flex justify-between items-center"><h1 className="text-2xl font-bold">Calendrier des réservations</h1></div>
-             <CalendarView bookings={bookings} role={UserRole.PARTNER} onViewProfile={openProfile} />
-          </div>
-        )}
-        
-        {activeTab === 'bookings' && (
-          <div>
-            <div className="flex justify-between items-center mb-6"><h1 className="text-2xl font-bold">Gestion des réservations</h1></div>
-            <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
-              <button onClick={() => setFilterStatus('ALL')} className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${filterStatus === 'ALL' ? 'bg-gray-900 text-white' : 'bg-white border text-gray-700 hover:bg-gray-50'}`}>Tout ({bookings.length})</button>
-              <button onClick={() => setFilterStatus(BookingStatus.PENDING)} className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${filterStatus === BookingStatus.PENDING ? 'bg-yellow-500 text-white' : 'bg-white border text-gray-700 hover:bg-gray-50'}`}>En attente ({bookings.filter(b => b.status === BookingStatus.PENDING).length})</button>
-              <button onClick={() => setFilterStatus(BookingStatus.CONFIRMED)} className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${filterStatus === BookingStatus.CONFIRMED ? 'bg-green-600 text-white' : 'bg-white border text-gray-700 hover:bg-gray-50'}`}>Confirmées ({bookings.filter(b => b.status === BookingStatus.CONFIRMED).length})</button>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-              <table className="w-full text-left">
-                <thead className="bg-gray-50 border-b"><tr><th className="p-4 text-xs font-bold text-gray-500 uppercase">Client</th><th className="p-4 text-xs font-bold text-gray-500 uppercase">Expérience</th><th className="p-4 text-xs font-bold text-gray-500 uppercase">Date & Heure</th><th className="p-4 text-xs font-bold text-gray-500 uppercase">Prix Total</th><th className="p-4 text-xs font-bold text-gray-500 uppercase">Statut</th><th className="p-4 text-xs font-bold text-gray-500 uppercase">Actions</th></tr></thead>
-                <tbody className="divide-y">{filteredBookings.map(b => (
-                    <tr key={b.id} className="hover:bg-gray-50">
-                      <td className="p-4">
-                        <button 
-                            onClick={() => openProfile(b.client, 'CLIENT')}
-                            className="text-left group"
-                        >
-                            <div className="font-medium text-gray-900 group-hover:text-brand-600 transition-colors flex items-center gap-2">
-                                {b.client?.name}
-                                <ExternalLink size={12} className="opacity-0 group-hover:opacity-100" />
-                            </div>
-                            <div className="text-xs text-gray-500">{b.guests} pers.</div>
-                        </button>
-                      </td>
-                      <td className="p-4 text-sm text-gray-600">{b.experienceName}</td>
-                      <td className="p-4 text-sm"><div className="font-medium">{b.date}</div><div className="text-xs text-gray-500">{b.time || 'N/A'}</div></td>
-                      <td className="p-4 font-medium">{b.totalPrice} MAD</td>
-                      <td className="p-4"><span className={`px-2 py-1 rounded-full text-xs font-bold ${b.status === BookingStatus.PENDING ? 'bg-yellow-100 text-yellow-800' : ''} ${b.status === BookingStatus.CONFIRMED ? 'bg-green-100 text-green-800' : ''} ${b.status === BookingStatus.CANCELLED ? 'bg-red-100 text-red-800' : ''} ${b.status === BookingStatus.COMPLETED ? 'bg-gray-100 text-gray-800' : ''}`}>{b.status === BookingStatus.PENDING ? 'En attente' : b.status}</span></td>
-                      <td className="p-4">
-                        {b.status === BookingStatus.PENDING && (<div className="flex gap-2"><button onClick={() => handleStatusUpdate(b.id, BookingStatus.CONFIRMED)} className="p-1.5 bg-green-50 text-green-600 rounded hover:bg-green-100 transition-colors"><Check size={16}/></button><button onClick={() => handleStatusUpdate(b.id, BookingStatus.CANCELLED)} className="p-1.5 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors"><X size={16}/></button></div>)}
-                        {b.status === BookingStatus.CONFIRMED && (<button onClick={() => handleStatusUpdate(b.id, BookingStatus.COMPLETED)} className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs hover:bg-gray-200">Terminer</button>)}
-                      </td>
-                    </tr>
-                  ))}</tbody>
-              </table>
-            </div>
-          </div>
-        )}
-        
-        {activeTab === 'listings' && (
-           <div>
-             <div className="flex justify-between items-center mb-6"><h1 className="text-2xl font-bold">{isCreating ? 'Nouvelle Expérience' : 'Mes Expériences'}</h1>{!isCreating ? <button onClick={() => setIsCreating(true)} className="bg-brand-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 hover:bg-brand-700 transition"><Plus size={18} /> Créer une expérience</button> : <button onClick={() => setIsCreating(false)} className="text-gray-500 hover:text-gray-700 px-4 py-2 font-medium">Annuler</button>}</div>
-             {isCreating ? <div className="bg-white border rounded-xl p-8 max-w-3xl"><form onSubmit={handleCreateExperience} className="space-y-6"><div><label className="block text-sm font-bold text-gray-700 mb-1">Titre</label><input type="text" required className="w-full border rounded-lg p-3 outline-none focus:ring-2 focus:ring-brand-500" value={newExperience.title} onChange={e => setNewExperience({...newExperience, title: e.target.value})} /></div><div className="flex justify-end gap-3 pt-4 border-t"><button type="submit" className="px-6 py-2 rounded-lg bg-brand-600 text-white font-bold">Publier</button></div></form></div> : <div className="grid grid-cols-1 md:grid-cols-2 gap-6">{myExperiences.map(exp => (<div key={exp.id} className="bg-white border rounded-xl overflow-hidden shadow-sm flex"><img src={exp.images[0]} className="w-32 object-cover" /><div className="p-4 flex-1"><h3 className="font-bold text-gray-900 line-clamp-1">{exp.title}</h3><div className="text-xs text-gray-500 mt-2">{exp.price} MAD</div></div></div>))}</div>}
-           </div>
-        )}
-        
-        {activeTab === 'messages' && (
-          <div className="bg-white border rounded-xl overflow-hidden shadow-sm flex flex-1 max-h-[calc(100vh-6rem)]">
-            {/* Conversations List */}
-            <div className="w-1/3 border-r bg-gray-50 flex flex-col min-w-[250px]">
-              <div className="p-4 border-b bg-white">
-                <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
-                    <MessageSquare size={18} className="text-brand-600"/> Discussions
-                </h3>
-                <div className="relative">
-                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
-                   <input 
-                     type="text" 
-                     placeholder="Rechercher..." 
-                     value={searchTerm}
-                     onChange={(e) => setSearchTerm(e.target.value)}
-                     className="w-full pl-9 pr-4 py-2 bg-gray-100 border border-transparent focus:bg-white focus:border-brand-300 rounded-lg text-sm outline-none transition-colors" 
-                   />
+    <div className={`flex h-screen bg-[#fafafa] font-sans overflow-hidden w-full`}>
+      {editingExperience && (
+        <ExperienceEditModal 
+          isOpen={isEditModalOpen} 
+          onClose={() => setIsEditModalOpen(false)} 
+          experience={editingExperience}
+          onSave={handleSaveExperience}
+        />
+      )}
+
+      {partner && (
+        <ExperienceCreateModal
+          isOpen={isCreateModalOpen}
+          onClose={() => setIsCreateModalOpen(false)}
+          onSave={handleCreateExperience}
+          partnerId={partner.id}
+        />
+      )}
+
+      {/* SIDEBAR */}
+      {!isAdminView && (
+        <aside className="w-72 bg-white border-r flex flex-col z-50 flex-shrink-0">
+          <div className="p-10 flex-1">
+             <div className="flex items-center gap-3 mb-16">
+                <div className="bg-brand-600 p-2.5 rounded-2xl text-white shadow-xl shadow-brand-200"><LayoutDashboard size={22} /></div>
+                <div className="min-w-0">
+                  <h2 className="font-black text-sm text-gray-900 truncate">{partner.companyName}</h2>
+                  <p className="text-[8px] font-black uppercase text-brand-500 tracking-widest">Partenaire</p>
                 </div>
+             </div>
+             <nav className="space-y-2">
+              {tabs.map(tab => (
+                <button 
+                  key={tab.id} 
+                  onClick={() => handleTabChange(tab.id)} 
+                  className={`w-full flex items-center justify-between p-5 rounded-2xl transition-all ${activeTab === tab.id ? 'bg-[#0F172A] text-white shadow-xl' : 'text-gray-400 hover:bg-gray-50'}`}
+                >
+                  <div className="flex items-center gap-4"><tab.icon size={18} /> <span className="text-[10px] font-black uppercase tracking-widest">{tab.label}</span></div>
+                  {tab.badge && activeTab !== tab.id ? <span className="bg-brand-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full">{tab.badge}</span> : null}
+                </button>
+              ))}
+            </nav>
+          </div>
+          <div className="p-10 border-t bg-gray-50/50">
+            <button onClick={handleLogout} className="flex items-center gap-3 text-red-500 font-black text-[10px] uppercase tracking-widest hover:text-red-700">
+              <LogOut size={16}/> Déconnexion
+            </button>
+          </div>
+        </aside>
+      )}
+
+      {/* CONTENT */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header className="h-24 bg-white border-b px-12 flex justify-between items-center flex-shrink-0">
+           <div className="flex items-center gap-6">
+              <div className="flex items-center gap-3">
+                 <div className="p-2 bg-brand-50 text-brand-600 rounded-lg">
+                    {tabs.find(t => t.id === activeTab)?.icon && React.createElement(tabs.find(t => t.id === activeTab)!.icon, { size: 18 })}
+                 </div>
+                 <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Dashboard</p>
               </div>
-              
-              <div className="flex-1 overflow-y-auto">
-                 {filteredConversations.map(c => {
-                    const chatPartner = resolveChatPartner(c);
-                    const isSelected = c.id === selectedConversationId;
-                    
-                    return (
-                      <div 
-                       key={c.id} 
-                       onClick={() => setSelectedConversationId(c.id)} 
-                       className={`p-4 border-b cursor-pointer transition-colors ${isSelected ? 'bg-white border-l-4 border-l-brand-600 shadow-sm' : 'hover:bg-gray-100 bg-gray-50/50'}`}
-                      >
-                         <div className="flex items-start gap-3">
-                            {/* Avatar */}
-                            <div className="relative">
-                               <div className="w-10 h-10 rounded-full bg-gray-200 overflow-hidden flex items-center justify-center text-gray-500 font-bold border border-gray-100 shrink-0">
-                                  {chatPartner.type === 'SUPPORT' 
-                                     ? <LifeBuoy size={20} className="text-brand-600" />
-                                     : (chatPartner.avatar 
-                                         ? <img src={chatPartner.avatar} className="w-full h-full object-cover" alt="" />
-                                         : chatPartner.name[0])}
-                               </div>
-                               {/* Status Dot */}
-                               {chatPartner.type !== 'SUPPORT' && <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>}
-                            </div>
+           </div>
+           <button onClick={() => setRefresh(r => r + 1)} className="p-3 bg-gray-50 text-gray-400 rounded-xl hover:text-brand-600 border border-gray-100"><RefreshCcw size={16}/></button>
+        </header>
 
-                            <div className="flex-1 min-w-0">
-                               <div className="flex justify-between items-start">
-                                  <div className={`font-bold text-sm truncate ${isSelected ? 'text-gray-900' : 'text-gray-700'}`}>
-                                     {chatPartner.name}
-                                  </div>
-                                  <span className="text-[10px] text-gray-400 whitespace-nowrap ml-2">
-                                    {c.lastMessageDate ? new Date(c.lastMessageDate).toLocaleDateString() : ''}
-                                  </span>
-                               </div>
-                               
-                               <div className="flex items-center gap-1 mt-0.5 mb-1">
-                                  {chatPartner.type === 'SUPPORT' ? (
-                                     <span className="bg-purple-100 text-purple-700 text-[10px] px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5">
-                                       <LifeBuoy size={8} /> Support
-                                     </span>
-                                  ) : chatPartner.type === 'PARTNER' ? (
-                                     <span className="bg-orange-100 text-orange-700 text-[10px] px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5">
-                                       <Briefcase size={8} /> Partenaire
-                                     </span>
-                                  ) : (
-                                     <span className="bg-blue-100 text-blue-700 text-[10px] px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5">
-                                       <User size={8} /> Client
-                                     </span>
-                                  )}
-                               </div>
+        <main className="flex-1 overflow-y-auto no-scrollbar p-12 lg:p-16">
+          <div className="max-w-7xl mx-auto space-y-12 pb-20">
+            
+            {activeTab === 'overview' && (
+              <div className="animate-fade-in space-y-12">
+                {/* KPIs */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                  <div className="p-10 rounded-[3rem] bg-brand-600 text-white shadow-2xl relative overflow-hidden">
+                    <DollarSign size={80} className="absolute -right-4 -top-4 opacity-10" />
+                    <p className="text-[10px] font-black uppercase text-white/60 mb-1 tracking-widest">CA Brut</p>
+                    <h4 className="text-4xl font-black tracking-tighter">{metrics.grossRevenue.toLocaleString()} <span className="text-sm">MAD</span></h4>
+                  </div>
+                  <div className="p-10 rounded-[3rem] bg-white border border-gray-100 shadow-sm">
+                    <p className="text-[10px] font-black uppercase text-gray-400 mb-1 tracking-widest">Commission ({metrics.commissionRate}%)</p>
+                    <h4 className="text-4xl font-black text-gray-900 tracking-tighter">-{metrics.commissionAmount.toLocaleString()} <span className="text-sm">MAD</span></h4>
+                  </div>
+                  <div className="p-10 rounded-[3rem] bg-white border border-gray-100 shadow-sm">
+                    <p className="text-[10px] font-black uppercase text-gray-400 mb-1 tracking-widest">Satisfaction</p>
+                    <div className="flex items-center gap-2">
+                       <h4 className="text-4xl font-black text-gray-900 tracking-tighter">{metrics.avgRating}</h4>
+                       <Star size={20} className="text-yellow-400 fill-yellow-400" />
+                    </div>
+                  </div>
+                  <div className="p-10 rounded-[3rem] bg-white border border-gray-100 shadow-sm">
+                    <p className="text-[10px] font-black uppercase text-gray-400 mb-1 tracking-widest">Consultations</p>
+                    <h4 className="text-4xl font-black text-gray-900 tracking-tighter">{metrics.totalViews}</h4>
+                  </div>
+                </div>
 
-                               <div className={`text-xs truncate ${c.isVirtual ? 'text-brand-600 font-medium italic' : (isSelected ? 'text-gray-600' : 'text-gray-400')}`}>
-                                  {c.isVirtual ? 'Nouvelle discussion' : c.lastMessage}
-                                </div>
-                            </div>
+                {/* Charts */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+                   <div className="lg:col-span-2 bg-white p-12 rounded-[4rem] border border-gray-100 shadow-sm h-[400px] flex flex-col">
+                      <h3 className="font-black text-xl mb-10 flex items-center gap-3"><BarChart3 size={20} className="text-brand-600"/> Évolution Ventes</h3>
+                      <div className="flex-1">
+                        <ResponsiveContainer width="100%" height="100%">
+                           <AreaChart data={chartData}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
+                              <YAxis hide />
+                              <Tooltip contentStyle={{ borderRadius: '1.5rem', border: 'none', fontWeight: 900 }} />
+                              <Area type="monotone" dataKey="count" stroke="#e11d48" strokeWidth={5} fillOpacity={0.05} fill="#e11d48" />
+                           </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                   </div>
+
+                   <div className="bg-white p-12 rounded-[4rem] border border-gray-100 shadow-sm flex flex-col h-[400px]">
+                      <h3 className="font-black text-xl mb-10">Mix Réservations</h3>
+                      <div className="flex-1 relative flex items-center justify-center">
+                         <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                               <Pie data={metrics.statusSplit} innerRadius={80} outerRadius={110} paddingAngle={10} dataKey="value">
+                                  {metrics.statusSplit.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                               </Pie>
+                               <Tooltip />
+                            </PieChart>
+                         </ResponsiveContainer>
+                         <div className="absolute text-center">
+                            <p className="text-3xl font-black text-gray-900 tracking-tighter">{metrics.totalBookings}</p>
+                            <p className="text-[9px] font-black uppercase text-gray-400 tracking-widest">Total</p>
                          </div>
                       </div>
-                    )
-                 })}
-                 
-                 {filteredConversations.length === 0 && (
-                      <div className="p-8 text-center text-gray-400 text-sm italic">
-                          Aucune conversation trouvée.
-                      </div>
-                 )}
-                 
-                 {!hasSupport && (
-                    <div className="p-4 mt-auto">
-                        <button onClick={startSupportChat} className="w-full py-2 bg-gray-100 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-200">
-                            Contacter le Support
-                        </button>
-                    </div>
-                 )}
-              </div>
-            </div>
+                   </div>
+                </div>
 
-            {/* Chat Window */}
-            <div className="w-2/3 flex flex-col bg-white h-full relative">
-                {selectedConversationId && currentChatPartner ? (
-                   <>
-                     {/* Chat Header */}
-                     <div className="p-4 border-b flex justify-between items-center bg-white z-10 shadow-sm">
-                        <div className="flex items-center gap-3">
-                           <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center font-bold text-gray-600 shrink-0 overflow-hidden">
-                               {currentChatPartner.type === 'SUPPORT' 
-                                     ? <LifeBuoy size={20} className="text-brand-600" />
-                                     : (currentChatPartner.avatar 
-                                         ? <img src={currentChatPartner.avatar} className="w-full h-full object-cover" alt="" />
-                                         : currentChatPartner.name[0])}
-                           </div>
-                           <div>
-                              <h3 className="font-bold text-gray-900 flex items-center gap-2">
-                                  {currentChatPartner.name}
-                                  {currentChatPartner.type === 'SUPPORT' && <CheckCircle size={14} className="text-brand-500" />}
-                              </h3>
-                              <div className="text-xs text-gray-500 flex items-center gap-3">
-                                  {(currentChatPartner.data as any)?.email && <span className="flex items-center gap-1"><Mail size={10} /> {(currentChatPartner.data as any).email}</span>}
-                                  {currentChatPartner.data?.phone && <span className="flex items-center gap-1"><Phone size={10} /> {currentChatPartner.data.phone}</span>}
+                {/* Activité */}
+                <div className="bg-[#0F172A] p-12 lg:p-16 rounded-[4.5rem] text-white shadow-2xl">
+                   <h3 className="text-3xl font-black tracking-tighter mb-12">Dernière Activité.</h3>
+                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                      {bookings.slice(0, 6).map(b => (
+                        <div key={b.id} className="bg-white/5 border border-white/10 p-10 rounded-[3rem] flex flex-col gap-6 hover:bg-white hover:text-gray-900 transition-all duration-700">
+                           <div className="flex justify-between items-start">
+                              <div className="h-14 w-14 rounded-2xl bg-white/10 flex items-center justify-center font-black text-brand-500 text-xl shadow-inner">
+                                 {b.client?.name?.[0] || 'K'}
                               </div>
+                              <span className={`px-4 py-1.5 rounded-full text-[8px] font-black uppercase tracking-widest border border-white/10 ${b.status === BookingStatus.CANCELLED ? 'text-red-400 bg-red-400/10' : 'text-green-400 bg-green-400/10'}`}>{b.status}</span>
+                           </div>
+                           <div className="space-y-1">
+                              <h4 className="font-black text-lg truncate uppercase tracking-tight">{b.client?.name}</h4>
+                              <p className="text-[10px] font-bold opacity-40 truncate">{b.experienceName}</p>
+                           </div>
+                           <div className="pt-6 border-t border-white/5 flex justify-between items-end">
+                              <div><p className="text-[8px] font-black opacity-20 uppercase mb-1">Montant</p><p className="text-xl font-black">{b.totalPrice} <span className="text-[10px] opacity-40 uppercase">Mad</span></p></div>
+                              <div className="text-right"><p className="text-[8px] font-black opacity-20 uppercase mb-1">Date</p><p className="text-[11px] font-black">{b.date}</p></div>
                            </div>
                         </div>
-                        {currentChatPartner.type !== 'SUPPORT' && (
-                            <button 
-                                onClick={() => openProfile(currentChatPartner.data, currentChatPartner.type as any)}
-                                className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-1"
-                            >
-                                <User size={14} /> Voir Profil
-                            </button>
-                        )}
-                     </div>
+                      ))}
+                      {bookings.length === 0 && <div className="col-span-full py-20 text-center opacity-10 uppercase font-black tracking-widest">Aucune donnée</div>}
+                   </div>
+                </div>
+              </div>
+            )}
 
-                     {/* Messages Area */}
-                     <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-gray-50/50">
-                        {(currentMessages.length === 0 || currentConversation?.isVirtual) && (
-                             <div className="text-center py-12 text-gray-400">
-                                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                    <MessageSquare className="text-gray-300" size={32} />
-                                 </div>
-                                 <p className="font-medium text-gray-500">C'est le début de votre conversation</p>
-                                 <p className="text-xs mt-1">Écrivez votre premier message ci-dessous.</p>
+            {/* CATALOGUE (LISTE) */}
+            {activeTab === 'listings' && !selectedExperienceDetail && (
+              <div className="animate-fade-in space-y-12">
+                 <div className="flex justify-between items-center">
+                    <h1 className="text-5xl font-black tracking-tighter text-gray-900">Catalogue.</h1>
+                    <button 
+                      onClick={() => setIsCreateModalOpen(true)}
+                      className="bg-brand-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-3 shadow-xl shadow-brand-100 hover:scale-105 transition-all"
+                    >
+                      <Plus size={18}/> Nouvelle Offre
+                    </button>
+                 </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+                    {EXPERIENCES.filter(e => e.partnerId === partner.id).map(exp => (
+                       <div key={exp.id} onClick={() => setSelectedExperienceDetail(exp)} className="bg-white border border-gray-100 rounded-[3.5rem] overflow-hidden shadow-sm hover:shadow-2xl transition-all group cursor-pointer flex flex-col h-full">
+                          <div className="relative h-64 overflow-hidden flex-shrink-0">
+                             <img src={exp.images[0]} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" alt="" />
+                             <div className="absolute top-6 left-6 bg-white/95 px-4 py-1.5 rounded-full text-[10px] font-black uppercase text-brand-600 shadow-sm">{exp.category}</div>
+                          </div>
+                          <div className="p-10 flex flex-col flex-1">
+                             <h4 className="font-black text-2xl mb-6 leading-tight tracking-tighter flex-1 line-clamp-2">{exp.title}</h4>
+                             <div className="flex justify-between items-center pt-8 border-t border-gray-100">
+                                <div className="font-black text-2xl text-gray-900 tracking-tighter">{exp.price} <span className="text-xs opacity-20 uppercase">Mad</span></div>
+                                <div className="flex items-center gap-2 text-[10px] font-black text-gray-400 uppercase"><Eye size={14}/> {exp.views || 0}</div>
                              </div>
-                         )}
-                        {currentMessages.map(m => (
-                            <div key={m.id} className={`flex ${m.senderId === user.id ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`flex flex-col ${m.senderId === user.id ? 'items-end' : 'items-start'} max-w-[70%]`}>
-                                    <div className={`px-4 py-3 text-sm rounded-2xl shadow-sm ${
-                                        m.senderId === user.id 
-                                        ? 'bg-brand-600 text-white rounded-tr-none' 
-                                        : 'bg-white border text-gray-800 rounded-tl-none'
-                                    }`}>
-                                    {m.content}
-                                    </div>
-                                    <span className="text-[10px] text-gray-400 mt-1 px-1">
-                                        {new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                    </span>
-                                </div>
-                            </div>
-                        ))}
-                        <div ref={messagesEndRef} />
-                     </div>
+                          </div>
+                       </div>
+                    ))}
+                 </div>
+              </div>
+            )}
 
-                     {/* Input Area */}
-                     <div className="p-4 border-t bg-white">
-                        <form onSubmit={handleSendMessage} className="flex gap-2 relative">
-                            <input 
-                                value={messageInput} 
-                                onChange={e => setMessageInput(e.target.value)} 
-                                className="flex-1 bg-gray-100 border-transparent focus:bg-white border focus:ring-2 focus:ring-brand-500 rounded-full pl-5 pr-12 py-3 text-sm outline-none transition-all" 
-                                placeholder="Écrivez votre réponse..." 
-                            />
-                            <button 
-                                type="submit" 
-                                className={`absolute right-1 top-1 p-2 rounded-full text-white transition-all ${messageInput.trim() ? 'bg-brand-600 hover:bg-brand-700' : 'bg-gray-300 cursor-not-allowed'}`}
-                                disabled={!messageInput.trim()}
-                            >
-                                <Send size={18}/>
-                            </button>
-                        </form>
-                     </div>
-                   </>
-                ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center text-gray-300 bg-white">
-                        <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                            <MessageSquare size={40} className="text-gray-300" />
-                        </div>
-                        <p className="font-medium text-gray-400">Sélectionnez une discussion pour afficher les messages</p>
+            {/* CATALOGUE (DÉTAILS) */}
+            {activeTab === 'listings' && selectedExperienceDetail && (
+              <div className="animate-fade-in space-y-12">
+                 <button onClick={() => setSelectedExperienceDetail(null)} className="flex items-center gap-3 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-brand-600 transition-colors">
+                    <ArrowLeft size={16}/> Retour au catalogue
+                 </button>
+                 
+                 <div className="bg-white rounded-[4rem] border border-gray-100 overflow-hidden shadow-sm flex flex-col lg:flex-row h-full lg:h-[600px]">
+                    <div className="w-full lg:w-2/5 h-80 lg:h-full relative overflow-hidden">
+                       <img src={selectedExperienceDetail.images[0]} className="w-full h-full object-cover" alt="" />
                     </div>
-                )}
-            </div>
+                    <div className="flex-1 p-16 flex flex-col justify-between">
+                       <div className="space-y-8">
+                          <div className="flex justify-between items-start">
+                             <div>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-brand-600 bg-brand-50 px-4 py-1.5 rounded-full mb-4 inline-block">{selectedExperienceDetail.category}</span>
+                                <h2 className="text-4xl font-black tracking-tighter text-gray-900 leading-none">{selectedExperienceDetail.title}</h2>
+                                <p className="text-gray-400 font-bold uppercase text-[10px] tracking-[0.2em] mt-3 flex items-center gap-2"><MapPin size={12}/> {selectedExperienceDetail.location}</p>
+                             </div>
+                             <button 
+                                onClick={() => { setEditingExperience(selectedExperienceDetail); setIsEditModalOpen(true); }}
+                                className="bg-gray-900 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all flex items-center gap-3 shadow-xl shadow-gray-200"
+                             >
+                                <Edit3 size={16}/> Modifier l'offre
+                             </button>
+                          </div>
+                          
+                          <div className="grid grid-cols-3 gap-8 py-10 border-y border-gray-50">
+                             <div className="text-center">
+                                <p className="text-[9px] font-black uppercase text-gray-400 mb-1">Prix</p>
+                                <p className="text-2xl font-black">{selectedExperienceDetail.price} <span className="text-[10px] opacity-30">MAD</span></p>
+                             </div>
+                             <div className="text-center">
+                                <p className="text-[9px] font-black uppercase text-gray-400 mb-1">Vues</p>
+                                <p className="text-2xl font-black">{selectedExperienceDetail.views || 0}</p>
+                             </div>
+                             <div className="text-center">
+                                <p className="text-[9px] font-black uppercase text-gray-400 mb-1">Note</p>
+                                <p className="text-2xl font-black flex items-center justify-center gap-2">{selectedExperienceDetail.rating} <Star size={16} className="text-yellow-400 fill-yellow-400"/></p>
+                             </div>
+                          </div>
+                       </div>
+                       
+                       <div className="flex items-center gap-4 text-gray-400">
+                          <Info size={18}/>
+                          <p className="text-[11px] font-medium leading-relaxed">Les modifications apportées au catalogue sont visibles instantanément par les voyageurs sur la plateforme.</p>
+                       </div>
+                    </div>
+                 </div>
+              </div>
+            )}
+
+            {/* MES VENTES */}
+            {activeTab === 'bookings' && (
+              <div className="animate-fade-in space-y-12">
+                 <h1 className="text-5xl font-black text-gray-900 tracking-tighter">Mes Ventes.</h1>
+                 <div className="grid gap-8">
+                    {bookings.map(b => (
+                      <div key={b.id} className="bg-white p-10 rounded-[3.5rem] border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-8 group hover:shadow-xl transition-all relative overflow-hidden">
+                         <div className="flex items-center gap-8 w-full md:w-auto">
+                            <div className="h-20 w-20 bg-brand-50 rounded-[2rem] flex items-center justify-center font-black text-brand-600 text-3xl shadow-inner group-hover:scale-110 transition-transform flex-shrink-0">{b.client?.name?.[0]}</div>
+                            <div className="min-w-0">
+                               <h4 className="font-black text-2xl text-gray-900 tracking-tighter truncate">{b.client?.name}</h4>
+                               <p className="text-[10px] font-black text-brand-600 uppercase tracking-widest truncate">{b.experienceName}</p>
+                               <p className="text-[10px] font-bold text-gray-400 uppercase mt-1">{b.date} • {b.guests} Pers.</p>
+                            </div>
+                         </div>
+
+                         <div className="flex flex-col md:flex-row items-center gap-10 w-full md:w-auto justify-between md:justify-end">
+                            <div className="text-right hidden md:block">
+                               <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Total</p>
+                               <p className="text-2xl font-black text-gray-900 tracking-tighter">{b.totalPrice} Mad</p>
+                            </div>
+
+                            {b.status === BookingStatus.PENDING ? (
+                              <div className="flex items-center gap-4 w-full md:w-auto">
+                                <button 
+                                  onClick={() => handleUpdateBooking(b.id, BookingStatus.CONFIRMED)}
+                                  className="flex-1 md:flex-none bg-green-500 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-green-100 hover:bg-green-600 transition-all flex items-center justify-center gap-2"
+                                >
+                                  <Check size={16}/> Accepter
+                                </button>
+                                <button 
+                                  onClick={() => handleUpdateBooking(b.id, BookingStatus.CANCELLED)}
+                                  className="flex-1 md:flex-none bg-gray-100 text-gray-500 px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 hover:text-red-600 transition-all flex items-center justify-center gap-2"
+                                >
+                                  <XCircle size={16}/> Refuser
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-4">
+                                 <div className="text-right md:hidden">
+                                    <p className="text-xl font-black text-gray-900 tracking-tighter">{b.totalPrice} Mad</p>
+                                 </div>
+                                 <span className={`px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm ${b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.COMPLETED ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-500'}`}>{b.status}</span>
+                              </div>
+                            )}
+                         </div>
+                      </div>
+                    ))}
+                    {bookings.length === 0 && <div className="py-20 text-center opacity-10 uppercase font-black tracking-widest">Aucune vente enregistrée</div>}
+                 </div>
+              </div>
+            )}
+
+            {/* MESSAGES */}
+            {activeTab === 'messages' && (
+              <div className="animate-fade-in h-[calc(100vh-280px)] bg-white border border-gray-100 rounded-[3rem] overflow-hidden flex shadow-sm">
+                 <div className="w-80 border-r bg-gray-50 flex flex-col flex-shrink-0">
+                    <div className="p-8 border-b bg-white">
+                       <h3 className="font-black text-2xl mb-4 tracking-tighter">Messages</h3>
+                       <div className="relative">
+                          <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input 
+                            value={searchTerm}
+                            onChange={e => setSearchTerm(e.target.value)}
+                            placeholder="Chercher..." 
+                            className="w-full bg-gray-100 border-none rounded-2xl py-3 pl-10 pr-4 text-[10px] font-black uppercase outline-none shadow-inner" 
+                          />
+                       </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto no-scrollbar">
+                       {filteredConversations.map(c => (
+                         <div key={c.id} onClick={() => setSelectedConversationId(c.id)} className={`p-6 border-b cursor-pointer transition-all ${selectedConversationId === c.id ? 'bg-white border-l-8 border-brand-600' : 'hover:bg-white'}`}>
+                            <div className="flex items-center gap-4">
+                               <div className="h-12 w-12 rounded-[1rem] bg-brand-50 flex items-center justify-center font-black text-brand-600">{c.client?.name?.[0]}</div>
+                               <div className="flex-1 min-w-0">
+                                  <h4 className="font-black text-xs uppercase truncate text-gray-900">{c.client?.name}</h4>
+                                  <p className="text-[10px] truncate text-gray-400 font-bold">{c.lastMessage}</p>
+                               </div>
+                            </div>
+                         </div>
+                       ))}
+                    </div>
+                 </div>
+                 <div className="flex-1 flex flex-col bg-white overflow-hidden">
+                    {selectedConversationId ? (
+                      <>
+                        <div className="p-8 border-b bg-white flex items-center gap-4 shadow-sm z-10">
+                           <div className="h-14 w-14 rounded-[1.25rem] bg-brand-50 flex items-center justify-center font-black text-brand-600">{partnerConversations.find(c => c.id === selectedConversationId)?.client?.name?.[0]}</div>
+                           <h3 className="font-black text-xl tracking-tighter">{partnerConversations.find(c => c.id === selectedConversationId)?.client?.name}</h3>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-10 space-y-6 bg-gray-50 no-scrollbar">
+                           {currentMessages.map(m => (
+                             <div key={m.id} className={`flex ${m.senderId === partner.userId ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`max-w-[75%] px-8 py-5 rounded-[2.5rem] shadow-sm text-sm font-bold ${m.senderId === partner.userId ? 'bg-[#0F172A] text-white rounded-tr-none' : 'bg-white border text-gray-800 rounded-tl-none'}`}>
+                                   {m.content}
+                                </div>
+                             </div>
+                           ))}
+                           <div ref={messagesEndRef} />
+                        </div>
+                        <form onSubmit={handleSendMessage} className="p-10 border-t flex gap-5">
+                           <input value={messageInput} onChange={e => setMessageInput(e.target.value)} className="flex-1 bg-gray-100 border-none rounded-2xl py-5 px-10 text-[12px] font-bold outline-none shadow-inner" placeholder="Répondre..." />
+                           <button type="submit" className="bg-brand-600 text-white p-5 rounded-2xl shadow-xl hover:scale-105" disabled={!messageInput.trim()}><Send size={24}/></button>
+                        </form>
+                      </>
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center opacity-10">
+                         <MessageSquare size={100} className="mb-6" />
+                         <p className="text-xl font-black uppercase tracking-widest">Sélectionnez une discussion</p>
+                      </div>
+                    )}
+                 </div>
+              </div>
+            )}
           </div>
-        )}
-      </main>
+        </main>
+      </div>
     </div>
   );
 };

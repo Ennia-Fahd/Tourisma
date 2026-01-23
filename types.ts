@@ -1,3 +1,4 @@
+
 // Enums for status management
 export enum BookingStatus {
   PENDING = 'PENDING',
@@ -47,7 +48,7 @@ export interface Experience {
   category: string;
   description: string;
   price: number;
-  duration: string; // e.g., "3 heures" or "1 jour"
+  duration: string;
   location: string;
   images: string[];
   maxGuests: number;
@@ -55,18 +56,33 @@ export interface Experience {
   reviewsCount: number;
   isActive: boolean;
   included: string[];
+  // Added views property to resolve TS error in dashboards
+  views?: number;
+}
+
+export interface Review {
+  id: string;
+  experienceId: string;
+  userId: string;
+  userName: string;
+  rating: number;
+  comment: string;
+  date: string;
 }
 
 export interface Booking {
   id: string;
   experienceId: string;
   clientId: string;
-  date: string; // ISO date string YYYY-MM-DD
-  time: string; // HH:mm
+  date: string;
+  time: string;
+  adults: number;
+  children: number;
   guests: number;
   totalPrice: number;
   status: BookingStatus;
   createdAt: string;
+  hasReviewed?: boolean;
 }
 
 export interface Message {

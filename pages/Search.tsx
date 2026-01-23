@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useMemo } from 'react';
 import { EXPERIENCES, PARTNERS } from '../services/mockData';
 import { PartnerStatus, UserRole } from '../types';
-import { Filter, Map as MapIcon, Star, MapPin, MessageSquare } from 'lucide-react';
+import { Filter, Map as MapIcon, Star, MapPin, MessageSquare, Search as SearchIcon, X, DollarSign, ChevronDown } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../App';
 
@@ -10,138 +11,142 @@ const Search = () => {
   const location = useLocation();
   const { user } = useAuth();
   
-  const [priceRange, setPriceRange] = useState<number>(3000);
+  const [priceRange, setPriceRange] = useState<number>(location.state?.maxPrice || 3000);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedCity, setSelectedCity] = useState<string>('all');
   
-  // Update city if coming from Home page state
   useEffect(() => {
-    if (location.state?.city) {
+    if (location.state?.city && location.state.city !== 'all') {
       setSelectedCity(location.state.city);
+    }
+    if (location.state?.category) {
+      setSelectedCategory(location.state.category);
     }
   }, [location.state]);
 
-  const categories = ['Aventure', 'Culture', 'Gastronomie', 'Désert', 'Sport'];
-  const cities = ['Marrakech', 'Agadir', 'Essaouira', 'Fès', 'Tanger', 'Chefchaouen', 'Casablanca', 'Merzouga', 'Ouarzazate', 'Imlil'];
+  const categories = ['Aventure', 'Culture', 'Gastronomie', 'Désert', 'Sport', 'Bien-être'];
 
-  // Filter out suspended partners' experiences
+  // Histogram simulation data
+  const histogramData = [30, 50, 80, 60, 40, 25, 15, 10, 5, 8, 12, 10, 5, 3, 2];
+
+  // Only show experiences from ACTIVE partners
   const activePartnerIds = PARTNERS.filter(p => p.status === PartnerStatus.ACTIF).map(p => p.id);
   const activeExperiences = EXPERIENCES.filter(e => activePartnerIds.includes(e.partnerId));
 
   const filteredExperiences = activeExperiences.filter(exp => {
     const matchPrice = exp.price <= priceRange;
     const matchCat = selectedCategory === 'all' || exp.category === selectedCategory;
-    
-    // Case insensitive search logic
     const cityTerm = selectedCity.toLowerCase();
     const locationTerm = exp.location.toLowerCase();
-    
-    const matchCity = selectedCity === 'all' || 
-                      locationTerm.includes(cityTerm) || 
-                      (cityTerm === 'marrakech' && locationTerm === 'ourika'); // Quick fix to include Ourika with Marrakech
-
+    const matchCity = selectedCity === 'all' || locationTerm.includes(cityTerm) || (cityTerm === 'marrakech' && locationTerm === 'ourika');
     return matchPrice && matchCat && matchCity;
   });
 
   const handleContact = (e: React.MouseEvent, partnerId: string) => {
     e.stopPropagation();
     if (!user) {
-        alert("Veuillez vous connecter (Mode Client) pour contacter ce partenaire.");
+        alert("Veuillez vous connecter pour contacter ce partenaire.");
         return;
     }
-    navigate('/client/dashboard', { 
-        state: { 
-            activeTab: 'messages', 
-            startConversationWith: partnerId 
-        } 
-    });
+    navigate('/client/dashboard', { state: { activeTab: 'messages', startConversationWith: partnerId } });
   };
 
-  // Determine if contact button should be visible (Guests or Clients only)
   const showContactButton = !user || user.role === UserRole.CLIENT;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 flex flex-col md:flex-row gap-8">
+    <div className="max-w-7xl mx-auto px-4 py-10 flex flex-col lg:flex-row gap-12 pt-28">
       {/* Sidebar Filters */}
-      <div className="w-full md:w-1/4">
-        <div className="sticky top-24 space-y-8">
-           {/* Map Toggle (Mock) */}
-           <div className="bg-morocco-blue/10 rounded-xl p-4 flex items-center justify-between cursor-pointer hover:bg-morocco-blue/20 transition text-morocco-blue">
-            <span className="font-semibold">Afficher la carte</span>
-            <MapIcon size={20} />
-          </div>
+      <div className="w-full lg:w-80 flex-shrink-0">
+        <div className="sticky top-28 space-y-10 bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm">
+           <div className="flex items-center justify-between mb-2">
+              <h3 className="font-black text-xl tracking-tighter flex items-center gap-3"><Filter size={18} className="text-brand-600"/> Filtres</h3>
+              {(selectedCategory !== 'all' || selectedCity !== 'all' || priceRange < 3000) && (
+                <button 
+                  onClick={() => {setSelectedCategory('all'); setSelectedCity('all'); setPriceRange(3000);}}
+                  className="text-[9px] text-brand-600 font-black uppercase tracking-widest hover:underline"
+                >
+                  Réinitialiser
+                </button>
+              )}
+           </div>
 
-          <div>
-            <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Filter size={18}/> Filtres</h3>
-            
-            {/* Destination Filter */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Destination</label>
-              {/* Changed to input to support text search from home properly, or can keep select if options match */}
-              <input 
-                type="text"
-                value={selectedCity === 'all' ? '' : selectedCity}
-                onChange={(e) => setSelectedCity(e.target.value || 'all')}
-                placeholder="Ville ou région..."
-                className="w-full border border-gray-300 rounded-lg p-2.5 text-sm outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500"
-              />
-              <div className="mt-2 flex flex-wrap gap-2">
-                {cities.slice(0, 5).map(city => (
-                  <button 
-                    key={city}
-                    onClick={() => setSelectedCity(city)}
-                    className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-gray-600"
-                  >
-                    {city}
-                  </button>
-                ))}
+          <div className="space-y-10">
+            {/* City Search */}
+            <div>
+              <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-4">Destination</label>
+              <div className="relative">
+                <SearchIcon size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" />
+                <input 
+                  type="text"
+                  value={selectedCity === 'all' ? '' : selectedCity}
+                  onChange={(e) => setSelectedCity(e.target.value || 'all')}
+                  placeholder="Rechercher une ville..."
+                  className="w-full bg-gray-50 border-none rounded-2xl py-4 pl-12 pr-4 text-xs font-black uppercase outline-none focus:ring-2 focus:ring-brand-500 transition-all shadow-inner"
+                />
               </div>
             </div>
 
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Catégorie</label>
-              <div className="space-y-2">
-                <div className="flex items-center">
-                  <input 
-                    type="radio" 
-                    name="cat" 
-                    id="all" 
-                    checked={selectedCategory === 'all'} 
-                    onChange={() => setSelectedCategory('all')}
-                    className="h-4 w-4 text-brand-600 focus:ring-brand-500 border-gray-300"
-                  />
-                  <label htmlFor="all" className="ml-2 text-sm text-gray-700">Toutes</label>
-                </div>
-                {categories.map(cat => (
-                  <div key={cat} className="flex items-center">
-                    <input 
-                      type="radio" 
-                      name="cat" 
-                      id={cat} 
-                      checked={selectedCategory === cat}
-                      onChange={() => setSelectedCategory(cat)}
-                      className="h-4 w-4 text-brand-600 focus:ring-brand-500 border-gray-300"
-                    />
-                    <label htmlFor={cat} className="ml-2 text-sm text-gray-700">{cat}</label>
-                  </div>
-                ))}
+            {/* Price Slicer with Histogram */}
+            <div>
+              <div className="flex justify-between items-end mb-6">
+                <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest">Budget Max</label>
+                <span className="text-brand-600 font-black text-xl tracking-tighter">{priceRange} <span className="text-[10px]">MAD</span></span>
               </div>
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Prix max: {priceRange} MAD</label>
+              
+              {/* Simple Histogram UI */}
+              <div className="flex items-end gap-1 h-12 mb-2 px-1">
+                 {histogramData.map((val, idx) => (
+                   <div 
+                    key={idx} 
+                    className={`flex-1 rounded-t-sm transition-all duration-500 ${ (idx / histogramData.length) * 3000 <= priceRange ? 'bg-brand-500' : 'bg-gray-100' }`} 
+                    style={{ height: `${val}%` }} 
+                   />
+                 ))}
+              </div>
+              
               <input 
-                type="range" 
-                min="0" 
-                max="3000" 
-                step="100" 
+                type="range" min="0" max="3000" step="50" 
                 value={priceRange} 
                 onChange={(e) => setPriceRange(parseInt(e.target.value))}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-brand-600"
+                className="w-full h-1.5 bg-gray-100 rounded-lg appearance-none cursor-pointer accent-brand-600 mb-6"
               />
-              <div className="flex justify-between text-xs text-gray-500 mt-1">
-                <span>0 MAD</span>
-                <span>3000+ MAD</span>
+
+              <div className="flex flex-wrap gap-2">
+                 {[
+                   { label: 'Éco', val: 500 },
+                   { label: 'Mid', val: 1200 },
+                   { label: 'Lux', val: 2500 }
+                 ].map(chip => (
+                   <button 
+                    key={chip.label}
+                    onClick={() => setPriceRange(chip.val)}
+                    className={`px-3 py-1.5 rounded-full text-[8px] font-black uppercase tracking-widest border transition-all ${priceRange === chip.val ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-400 border-gray-100 hover:border-gray-300'}`}
+                   >
+                     {chip.label}
+                   </button>
+                 ))}
+              </div>
+            </div>
+
+            {/* Categories */}
+            <div>
+              <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-4">Catégories</label>
+              <div className="flex flex-wrap gap-3">
+                <button 
+                  onClick={() => setSelectedCategory('all')}
+                  className={`px-4 py-2.5 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all ${selectedCategory === 'all' ? 'bg-brand-600 text-white shadow-lg shadow-brand-100' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+                >
+                  Tout
+                </button>
+                {categories.map(cat => (
+                  <button 
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`px-4 py-2.5 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all ${selectedCategory === cat ? 'bg-brand-600 text-white shadow-lg shadow-brand-100' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+                  >
+                    {cat}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
@@ -149,60 +154,56 @@ const Search = () => {
       </div>
 
       {/* Results */}
-      <div className="w-full md:w-3/4">
-        <h1 className="text-2xl font-bold mb-6">
-          {filteredExperiences.length} Expériences trouvées 
-          {selectedCity !== 'all' ? ` pour "${selectedCity}"` : ' au Maroc'}
-        </h1>
+      <div className="flex-1 min-w-0">
+        <div className="mb-10 flex justify-between items-end">
+          <div>
+            <h1 className="text-5xl font-black text-gray-900 mb-2 tracking-tighter">
+              {filteredExperiences.length} Résultats<span className="text-brand-600">.</span>
+            </h1>
+            <p className="text-gray-400 font-bold uppercase text-[10px] tracking-[0.2em]">
+              {selectedCategory !== 'all' ? `${selectedCategory} ` : 'Expériences '}
+              {selectedCity !== 'all' ? `à ${selectedCity} ` : 'partout au Maroc '}
+              {priceRange < 3000 && `• Max ${priceRange} MAD`}
+            </p>
+          </div>
+        </div>
         
-        <div className="grid grid-cols-1 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
           {filteredExperiences.map(exp => (
-            <div key={exp.id} onClick={() => navigate(`/experience/${exp.id}`)} className="bg-white border rounded-xl overflow-hidden hover:shadow-lg transition-all cursor-pointer flex flex-col md:flex-row h-auto md:h-64 group relative">
-              <div className="md:w-2/5 relative h-48 md:h-full overflow-hidden">
-                <img src={exp.images[0]} alt={exp.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                <div className="absolute top-3 left-3 bg-white/90 backdrop-blur px-2 py-1 rounded text-xs font-bold uppercase tracking-wide">
+            <div key={exp.id} onClick={() => navigate(`/experience/${exp.id}`)} className="group bg-white rounded-[3rem] overflow-hidden border border-gray-100 shadow-sm hover:shadow-2xl transition-all duration-700 cursor-pointer flex flex-col">
+              <div className="relative h-72 overflow-hidden">
+                <img src={exp.images[0]} alt={exp.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" />
+                <div className="absolute top-6 left-6 bg-white/95 backdrop-blur px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest text-brand-600 shadow-sm">
                   {exp.category}
                 </div>
+                {showContactButton && (
+                  <button 
+                    onClick={(e) => handleContact(e, exp.partnerId)}
+                    className="absolute top-6 right-6 bg-black/50 backdrop-blur-md hover:bg-brand-600 text-white p-3.5 rounded-2xl transition-all duration-300 border border-white/20"
+                  >
+                    <MessageSquare size={16} />
+                  </button>
+                )}
               </div>
-              <div className="p-6 md:w-3/5 flex flex-col justify-between">
-                <div>
-                  <div className="flex justify-between items-start">
-                    <h3 className="text-xl font-bold text-gray-900 mb-2 group-hover:text-brand-600 transition-colors pr-8">{exp.title}</h3>
-                    {/* Action Buttons Top Right */}
-                    <div className="flex items-center gap-1 absolute top-4 right-4 md:relative md:top-auto md:right-auto">
-                        {showContactButton && (
-                            <button 
-                                onClick={(e) => handleContact(e, exp.partnerId)}
-                                className="bg-gray-100 hover:bg-brand-50 text-gray-500 hover:text-brand-600 p-2 rounded-full transition-colors"
-                                title="Contacter le partenaire"
-                            >
-                                <MessageSquare size={18} />
-                            </button>
-                        )}
-                    </div>
+              <div className="p-10 flex-1 flex flex-col">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-1.5 text-sm font-black text-gray-900">
+                      <Star size={16} className="fill-brand-600 text-brand-600" /> {exp.rating} 
                   </div>
-                  
-                  <div className="flex items-center gap-1 text-sm font-semibold mb-3">
-                      <Star size={14} className="fill-black text-black" /> {exp.rating} 
-                      <span className="text-gray-400 font-normal ml-1">({exp.reviewsCount})</span>
-                  </div>
-
-                  <p className="text-gray-500 text-sm line-clamp-2 mb-4">{exp.description}</p>
-                  <div className="flex gap-2 flex-wrap">
-                    {exp.included.slice(0, 2).map((inc, i) => (
-                      <span key={i} className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">{inc}</span>
-                    ))}
-                    {exp.included.length > 2 && <span className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">+{exp.included.length - 2}</span>}
+                  <div className="text-gray-400 text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5">
+                    <MapPin size={14} className="text-brand-500" /> {exp.location}
                   </div>
                 </div>
+
+                <h3 className="text-2xl font-black text-gray-900 mb-8 line-clamp-2 leading-tight tracking-tighter group-hover:text-brand-600 transition-colors flex-1">{exp.title}</h3>
                 
-                <div className="flex justify-between items-end mt-4">
-                  <div className="text-sm text-gray-500 flex items-center gap-1">
-                     <MapPin size={14} /> {exp.location} • {exp.duration}
+                <div className="flex justify-between items-end pt-8 border-t border-gray-50">
+                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                    <DollarSign size={14} className="text-brand-500"/> Prix / Pers.
                   </div>
                   <div className="text-right">
-                    <div className="text-sm text-gray-400">à partir de</div>
-                    <div className="text-2xl font-bold text-gray-900">{exp.price} MAD</div>
+                    <span className="block text-[8px] font-black text-gray-400 uppercase mb-1">Dès</span>
+                    <span className="text-3xl font-black text-gray-900 tracking-tighter">{exp.price} <span className="text-xs font-bold opacity-30">MAD</span></span>
                   </div>
                 </div>
               </div>
@@ -210,9 +211,15 @@ const Search = () => {
           ))}
 
           {filteredExperiences.length === 0 && (
-            <div className="text-center py-20 bg-gray-50 rounded-xl">
-              <p className="text-gray-500 text-lg">Aucune expérience ne correspond à vos filtres.</p>
-              <button onClick={() => {setPriceRange(3000); setSelectedCategory('all'); setSelectedCity('all')}} className="mt-4 text-brand-600 font-medium hover:underline">Réinitialiser les filtres</button>
+            <div className="col-span-full text-center py-32 bg-gray-50 rounded-[4rem] border-2 border-dashed border-gray-100 flex flex-col items-center">
+              <div className="p-6 bg-white rounded-3xl shadow-sm mb-6"><Filter size={32} className="text-gray-200" /></div>
+              <p className="text-gray-400 font-black uppercase text-[11px] tracking-widest mb-4">Aucune aventure ne correspond à vos filtres</p>
+              <button 
+                onClick={() => {setSelectedCategory('all'); setSelectedCity('all'); setPriceRange(3000);}}
+                className="text-brand-600 font-black uppercase text-[10px] tracking-widest hover:underline"
+              >
+                Tout réinitialiser
+              </button>
             </div>
           )}
         </div>

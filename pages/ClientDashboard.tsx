@@ -1,38 +1,34 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../App';
-import { getClientBookings, MESSAGES, CONVERSATIONS, getPartnerById, updateBookingStatus, sendMessage, SUPPORT_PARTNER_ID, initializeSupportChat } from '../services/mockData';
+import { getClientBookings, MESSAGES, CONVERSATIONS, getPartnerById, updateBookingStatus, sendMessage, SUPPORT_PARTNER_ID, initializeSupportChat, addReview, BOOKINGS, markMessagesAsRead } from '../services/mockData';
 import { BookingStatus, UserRole } from '../types';
-import { Calendar, MessageSquare, Clock, CheckCircle, XCircle, List, Send, User, LifeBuoy, ExternalLink, Search, MapPin, Mail, Phone, Briefcase } from 'lucide-react';
+import { Calendar, MessageSquare, Clock, CheckCircle, XCircle, List, Send, User as UserIcon, LifeBuoy, ExternalLink, Search, MapPin, Mail, Phone, Briefcase, Star, Info, LogOut, Compass, AlertCircle } from 'lucide-react';
 import CalendarView from '../components/CalendarView';
 import ProfileModal from '../components/ProfileModal';
-import { useLocation } from 'react-router-dom';
+import ReviewModal from '../components/ReviewModal';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 const ClientDashboard = () => {
-  const { user } = useAuth();
+  const { user, logout, refreshUnread, unreadCount } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'bookings' | 'messages' | 'calendar'>('bookings');
   const [bookings, setBookings] = useState<any[]>([]);
   
-  // Messaging state
+  // Messaging States
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
   const [refresh, setRefresh] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  
-  // Search for partners in messages
   const [searchTerm, setSearchTerm] = useState('');
-  
-  // Extra state to handle "Contact Partner" from details page
-  const [startChatPartnerId, setStartChatPartnerId] = useState<string | null>(null);
-  
-  // Quick Replies
-  const [suggestedReplies, setSuggestedReplies] = useState<string[]>([]);
 
-  // Profile Modal
+  // Modals
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileData, setProfileData] = useState<any>(null);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<any>(null);
 
-  // Initialize automated support chat
   useEffect(() => {
      if (user) {
          initializeSupportChat(user);
@@ -40,445 +36,324 @@ const ClientDashboard = () => {
      }
   }, [user]);
 
-  // Handle incoming navigation state (e.g. from ExperienceDetails)
   useEffect(() => {
     if (location.state) {
-        if (location.state.activeTab) {
-            setActiveTab(location.state.activeTab);
-        }
-        if (location.state.startConversationWith) {
-            setStartChatPartnerId(location.state.startConversationWith);
-        }
-        if (location.state.selectedConversationId) {
-            setSelectedConversationId(location.state.selectedConversationId);
-        }
-        if (location.state.suggestedReplies) {
-            setSuggestedReplies(location.state.suggestedReplies);
-        }
+        if (location.state.activeTab) setActiveTab(location.state.activeTab);
+        if (location.state.selectedConversationId) setSelectedConversationId(location.state.selectedConversationId);
     }
   }, [location]);
 
-  // Effect to load bookings
   useEffect(() => {
-    if (user) {
-      setBookings(getClientBookings(user.id));
-    }
-  }, [user]);
+    if (user) setBookings(getClientBookings(user.id));
+  }, [user, refresh]);
 
-  // Scroll to bottom of messages
+  // Mark messages as read when a conversation is selected
+  useEffect(() => {
+    if (user && selectedConversationId && activeTab === 'messages') {
+       const conv = displayConversations.find(c => c.id === selectedConversationId);
+       if (conv && conv.partner) {
+         markMessagesAsRead(user.id, conv.partner.userId);
+         refreshUnread();
+       }
+    }
+  }, [selectedConversationId, user, refresh, activeTab]);
+
   useEffect(() => {
     if (activeTab === 'messages' && selectedConversationId) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [activeTab, selectedConversationId, refresh, messageInput, suggestedReplies]);
+  }, [activeTab, selectedConversationId, refresh, messageInput]);
 
   if (!user) return null;
+
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
 
   const handleCancelBooking = (bookingId: string) => {
     if (window.confirm("Êtes-vous sûr de vouloir annuler cette réservation ?")) {
       updateBookingStatus(bookingId, BookingStatus.CANCELLED);
-      setBookings(getClientBookings(user.id));
+      setRefresh(p => p + 1);
     }
   };
 
-  const handleContactPartner = (partnerId: string) => {
-      setStartChatPartnerId(partnerId);
-      setActiveTab('messages');
+  const handleOpenReview = (booking: any) => {
+    setReviewTarget(booking);
+    setReviewModalOpen(true);
+  };
+
+  const handleSubmitReview = (rating: number, comment: string) => {
+    if (!user || !reviewTarget) return;
+    addReview({
+      experienceId: reviewTarget.experienceId,
+      userId: user.id,
+      userName: user.name,
+      rating,
+      comment,
+      date: new Date().toISOString().split('T')[0]
+    });
+    const b = BOOKINGS.find(book => book.id === reviewTarget.id);
+    if (b) b.hasReviewed = true;
+    setReviewModalOpen(false);
+    setRefresh(p => p + 1);
+    alert("Merci pour votre avis !");
   };
 
   const handleSendMessage = (e: React.FormEvent, content: string = messageInput) => {
     if (e) e.preventDefault();
     if (!content.trim() || !selectedConversationId) return;
-
-    // The selectedConversationId might be virtual (e.g., 'new_p1') or real (e.g., 'c1').
     const conversation = displayConversations.find(c => c.id === selectedConversationId);
-    
-    if (conversation) {
-      const partner = conversation.partner;
-      if (partner) {
-        const result = sendMessage(user.id, partner.userId, content);
-        if (result) {
-            if (conversation.isVirtual) {
-                setSelectedConversationId(result.id);
-            }
-        }
-        setMessageInput('');
-        setSuggestedReplies([]); // Clear suggestions after sending
-        setRefresh(prev => prev + 1); 
-      }
+    if (conversation && conversation.partner) {
+      sendMessage(user.id, conversation.partner.userId, content);
+      setMessageInput('');
+      setRefresh(prev => prev + 1); 
     }
   };
 
-  const startSupportChat = () => {
-     const existingConv = displayConversations.find(c => c.partnerId === SUPPORT_PARTNER_ID);
-     if (existingConv) {
-         setSelectedConversationId(existingConv.id);
-     }
-     setActiveTab('messages');
-  };
-
-  const openPartnerProfile = (partner: any) => {
-      if(!partner) return;
-      setProfileData(partner);
-      setProfileModalOpen(true);
-  };
-  
   const StatusBadge = ({ status }: { status: BookingStatus }) => {
     switch (status) {
-      case BookingStatus.PENDING:
-        return <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-semibold flex items-center gap-1"><Clock size={10}/> En attente</span>;
-      case BookingStatus.CONFIRMED:
-        return <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-semibold flex items-center gap-1"><CheckCircle size={10}/> Confirmé</span>;
-      case BookingStatus.CANCELLED:
-        return <span className="px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs font-semibold flex items-center gap-1"><XCircle size={10}/> Annulé</span>;
-      case BookingStatus.COMPLETED:
-        return <span className="px-2 py-1 bg-gray-100 text-gray-800 rounded-full text-xs font-semibold">Terminé</span>;
-      default:
-        return null;
+      case BookingStatus.PENDING: 
+        return <span className="px-4 py-2 bg-amber-50 text-amber-600 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-amber-100 shadow-sm"><Clock size={12}/> En attente de validation</span>;
+      case BookingStatus.CONFIRMED: 
+        return <span className="px-4 py-2 bg-green-50 text-green-700 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-green-100 shadow-sm"><CheckCircle size={12}/> Confirmée & au calendrier</span>;
+      case BookingStatus.CANCELLED: 
+        return <span className="px-4 py-2 bg-red-50 text-red-600 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-red-100 shadow-sm"><XCircle size={12}/> Annulée</span>;
+      case BookingStatus.COMPLETED: 
+        return <span className="px-4 py-2 bg-gray-50 text-gray-500 rounded-full text-[10px] font-black uppercase tracking-widest border border-gray-100">Expérience terminée</span>;
+      default: return null;
     }
   };
 
-  // --- Derive Display Conversations ---
-  
-  // 1. Existing Real Conversations (Includes Support because we auto-initialized it)
   const displayConversations = CONVERSATIONS.filter(c => c.clientId === user.id).map(c => ({
-      ...c,
+      ...c, 
       partner: getPartnerById(c.partnerId)!,
-      isVirtual: false
+      unreadCount: MESSAGES.filter(m => m.receiverId === user.id && m.senderId === getPartnerById(c.partnerId)!.userId && !m.read).length
   }));
 
-  // 2. Handle "Contact Partner" request from details page (Virtual Conversation if needed)
-  if (startChatPartnerId) {
-      const alreadyInList = displayConversations.find(c => c.partnerId === startChatPartnerId);
-      if (!alreadyInList) {
-          const newPartner = getPartnerById(startChatPartnerId);
-          if (newPartner) {
-              const virtualConv = {
-                  id: `new_${startChatPartnerId}`,
-                  clientId: user.id,
-                  partnerId: startChatPartnerId,
-                  lastMessage: 'Démarrer la discussion',
-                  lastMessageDate: '',
-                  partner: newPartner,
-                  isVirtual: true
-              };
-              displayConversations.unshift(virtualConv);
-          }
-      }
-  }
-
-  // Filter conversations
   const filteredConversations = displayConversations.filter(c => 
       c.partner.companyName.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // Effect to auto-select conversation if coming from contact button
-  useEffect(() => {
-     if (startChatPartnerId && !selectedConversationId) {
-         const targetId = displayConversations.find(c => c.partnerId === startChatPartnerId)?.id;
-         if (targetId) setSelectedConversationId(targetId);
-     }
-  }, [startChatPartnerId, displayConversations, selectedConversationId]);
-
-
-  // Get current messages for selected conversation
   const currentConversation = displayConversations.find(c => c.id === selectedConversationId);
   const currentPartner = currentConversation?.partner;
-  
-  const currentMessages = (!currentConversation?.isVirtual && currentPartner) ? MESSAGES.filter(m => 
-    (m.senderId === user.id && m.receiverId === currentPartner.userId) || 
-    (m.senderId === currentPartner.userId && m.receiverId === user.id)
-  ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()) : [];
+  const currentMessages = (currentPartner) ? MESSAGES.filter(m => (m.senderId === user.id && m.receiverId === currentPartner.userId) || (m.senderId === currentPartner.userId && m.receiverId === user.id)).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()) : [];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 min-h-screen flex flex-col">
-      <ProfileModal 
-         isOpen={profileModalOpen} 
-         onClose={() => setProfileModalOpen(false)} 
-         type="PARTNER"
-         data={profileData}
-      />
+    <div className="max-w-7xl mx-auto px-4 py-10 min-h-screen flex flex-col">
+      <ProfileModal isOpen={profileModalOpen} onClose={() => setProfileModalOpen(false)} type="PARTNER" data={profileData} />
+      <ReviewModal isOpen={reviewModalOpen} onClose={() => setReviewModalOpen(false)} experienceName={reviewTarget?.experience?.title || ''} onSubmit={handleSubmitReview} />
       
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Bonjour, {user.name}</h1>
-        <p className="text-gray-500">Gérez vos voyages et communiquez avec les organisateurs.</p>
-      </div>
-
-      <div className="flex border-b border-gray-200 mb-6 sticky top-0 bg-white/95 backdrop-blur z-20">
-        <button 
-          onClick={() => setActiveTab('bookings')}
-          className={`pb-4 px-6 font-medium text-sm transition-colors relative flex items-center gap-2 ${activeTab === 'bookings' ? 'text-brand-600' : 'text-gray-500 hover:text-gray-700'}`}
-        >
-          <List size={16} /> Mes Réservations
-          {activeTab === 'bookings' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-600"></div>}
-        </button>
-        <button 
-          onClick={() => setActiveTab('calendar')}
-          className={`pb-4 px-6 font-medium text-sm transition-colors relative flex items-center gap-2 ${activeTab === 'calendar' ? 'text-brand-600' : 'text-gray-500 hover:text-gray-700'}`}
-        >
-          <Calendar size={16} /> Calendrier
-          {activeTab === 'calendar' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-600"></div>}
-        </button>
-        <button 
-          onClick={() => setActiveTab('messages')}
-          className={`pb-4 px-6 font-medium text-sm transition-colors relative flex items-center gap-2 ${activeTab === 'messages' ? 'text-brand-600' : 'text-gray-500 hover:text-gray-700'}`}
-        >
-          <MessageSquare size={16} /> Messagerie
-          {activeTab === 'messages' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-600"></div>}
-        </button>
-      </div>
-
-      {activeTab === 'bookings' && (
-        <div className="space-y-4">
-          {bookings.map((booking) => (
-            <div key={booking.id} className="bg-white border rounded-lg p-6 flex flex-col md:flex-row justify-between items-start md:items-center shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex gap-4">
-                <div className="h-20 w-20 rounded-lg bg-gray-100 overflow-hidden flex-shrink-0">
-                  <img src={booking.experience?.images[0]} alt="thumb" className="w-full h-full object-cover" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-gray-900 text-lg">{booking.experience?.title}</h3>
-                  
-                  {/* Clickable Partner Name */}
-                  {booking.experience && (
-                     <div className="text-sm mt-1 flex items-center gap-1">
-                        <span className="text-gray-500">avec </span>
-                        <button 
-                            onClick={() => {
-                                const p = getPartnerById(booking.experience.partnerId);
-                                openPartnerProfile(p);
-                            }}
-                            className="font-medium text-brand-600 hover:underline flex items-center gap-1"
-                        >
-                            <Briefcase size={12} />
-                            {booking.partnerName || "Partenaire"}
-                        </button>
-                     </div>
-                  )}
-
-                  <div className="flex items-center text-sm text-gray-500 mt-2 gap-3">
-                     <span className="flex items-center gap-1"><Calendar size={14} /> {booking.date}</span>
-                     <span className="flex items-center gap-1"><Clock size={14} /> {booking.time || 'N/A'}</span>
-                     <span className="flex items-center gap-1"><User size={14} /> {booking.guests} Pers.</span>
-                  </div>
-                  <div className="mt-2 font-bold text-gray-900">{booking.totalPrice} MAD</div>
-                </div>
-              </div>
-              <div className="mt-4 md:mt-0 flex flex-col items-end gap-3">
-                <StatusBadge status={booking.status} />
-                <div className="flex gap-2">
-                   {/* Contact Button */}
-                    <button 
-                        onClick={() => handleContactPartner(booking.experience.partnerId)}
-                        className="text-sm border border-gray-200 hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-lg transition-colors font-medium flex items-center gap-1"
-                    >
-                        <MessageSquare size={14} /> Contacter
-                    </button>
-                    
-                    {booking.status === BookingStatus.PENDING && (
-                    <button onClick={() => handleCancelBooking(booking.id)} className="text-sm text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors font-medium">Annuler</button>
-                    )}
-                    {booking.status === BookingStatus.CONFIRMED && (
-                    <button className="text-sm text-brand-600 font-medium hover:bg-brand-50 px-3 py-1.5 rounded-lg transition-colors">Reçu</button>
-                    )}
-                </div>
-              </div>
-            </div>
-          ))}
-          {bookings.length === 0 && <div className="text-center text-gray-500 py-10 bg-white rounded-xl border border-dashed">Aucune réservation pour le moment.</div>}
-        </div>
-      )}
-
-      {activeTab === 'calendar' && (
-        <div>
-          <CalendarView bookings={bookings} role={UserRole.CLIENT} />
-        </div>
-      )}
-
-      {activeTab === 'messages' && (
-        <div className="bg-white border rounded-xl overflow-hidden shadow-sm flex flex-1 h-[600px] max-h-[80vh]">
-          {/* Chat List */}
-          <div className="w-1/3 border-r bg-gray-50 flex flex-col min-w-[280px]">
-             <div className="p-4 border-b bg-white">
-                 <div className="flex justify-between items-center mb-3">
-                    <span className="font-bold text-gray-700 text-lg">Discussions</span>
-                    <button onClick={startSupportChat} className="text-xs bg-brand-50 text-brand-700 px-2 py-1 rounded-full hover:bg-brand-100 flex items-center gap-1 font-semibold transition-colors" title="Contacter le support">
-                        <LifeBuoy size={12}/> Support
-                    </button>
-                 </div>
-                 <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
-                    <input 
-                      type="text" 
-                      placeholder="Rechercher un partenaire..." 
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full pl-9 pr-4 py-2 bg-gray-100 border border-transparent focus:bg-white focus:border-brand-300 rounded-lg text-sm outline-none transition-colors" 
-                    />
-                 </div>
-             </div>
-             
-             <div className="flex-1 overflow-y-auto">
-                {filteredConversations.map(c => {
-                   const isSelected = c.id === selectedConversationId;
-                   const isSupport = c.partnerId === SUPPORT_PARTNER_ID;
-                   
-                   return (
-                     <div 
-                       key={c.id} 
-                       onClick={() => setSelectedConversationId(c.id)}
-                       className={`p-4 border-b cursor-pointer transition-colors ${isSelected ? 'bg-white border-l-4 border-l-brand-600 shadow-sm' : 'hover:bg-gray-100 bg-gray-50/50'}`}
-                     >
-                        <div className="flex items-start gap-3">
-                           <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-bold ${isSupport ? 'bg-brand-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
-                              {isSupport ? <LifeBuoy size={20}/> : (c.partner.companyName[0])}
-                           </div>
-                           <div className="flex-1 min-w-0">
-                             <div className="flex justify-between items-start">
-                                <div className={`font-bold text-sm truncate ${isSelected ? 'text-gray-900' : 'text-gray-700'}`}>
-                                    {c.partner.companyName}
-                                </div>
-                                <span className="text-[10px] text-gray-400 whitespace-nowrap ml-1">
-                                    {c.lastMessageDate ? new Date(c.lastMessageDate).toLocaleDateString() : ''}
-                                </span>
-                             </div>
-                             
-                             {!isSupport && (
-                                <div className="flex items-center gap-1 mt-0.5 mb-1">
-                                   <span className="bg-purple-100 text-purple-700 text-[10px] px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5">
-                                      <Briefcase size={8} /> Partenaire
-                                   </span>
-                                </div>
-                             )}
-
-                             <div className={`text-xs truncate ${c.isVirtual ? 'text-brand-600 font-medium italic' : (isSelected ? 'text-gray-600' : 'text-gray-400')}`}>
-                               {c.isVirtual ? 'Nouvelle discussion' : c.lastMessage}
-                             </div>
-                           </div>
-                        </div>
-                     </div>
-                   )
-                })}
-                {filteredConversations.length === 0 && (
-                  <div className="p-8 text-center text-gray-500 text-sm">
-                    Aucune conversation trouvée.
-                    <button onClick={startSupportChat} className="block mx-auto mt-2 text-brand-600 font-medium hover:underline">Contacter le support</button>
-                  </div>
-                )}
-             </div>
+      <div className="mb-10 animate-fade-in flex justify-between items-start">
+        <div className="flex items-center gap-6">
+          <button 
+            onClick={() => navigate('/')}
+            className="p-4 bg-brand-50 text-brand-600 rounded-2xl hover:bg-brand-600 hover:text-white transition-all shadow-sm"
+          >
+            <Compass size={24} />
+          </button>
+          <div>
+            <h1 className="text-4xl font-black text-gray-900 leading-tight mb-2 tracking-tighter">Ahlan, {user.name}</h1>
+            <p className="text-gray-500 font-bold uppercase text-[10px] tracking-[0.2em]">Tableau de bord Client</p>
           </div>
-          
-          {/* Chat Content */}
-          <div className="w-2/3 flex flex-col bg-white relative">
-              {selectedConversationId ? (
-                <>
-                  <div className="p-4 border-b flex justify-between items-center bg-white shadow-sm z-10">
-                    <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold shadow-sm ${currentConversation?.partnerId === SUPPORT_PARTNER_ID ? 'bg-brand-600' : 'bg-gray-800'}`}>
-                        {currentConversation?.partnerId === SUPPORT_PARTNER_ID ? <LifeBuoy size={20} /> : currentPartner?.companyName.charAt(0)}
-                        </div>
-                        <div>
-                            <h3 className="font-bold text-gray-900 flex items-center gap-2">
-                                {currentPartner?.companyName}
-                                {currentConversation?.partnerId !== SUPPORT_PARTNER_ID && <CheckCircle size={14} className="text-green-500" />}
-                            </h3>
-                            <div className="text-xs text-gray-500 flex items-center gap-3">
-                                {currentPartner?.id !== SUPPORT_PARTNER_ID && (
-                                    <>
-                                        <span className="flex items-center gap-1"><MapPin size={10} /> {currentPartner?.city}</span>
-                                        <span className="flex items-center gap-1"><Phone size={10} /> {currentPartner?.phone}</span>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                    {currentConversation?.partnerId !== SUPPORT_PARTNER_ID && (
-                        <button 
-                            onClick={() => openPartnerProfile(currentPartner)}
-                            className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-1"
-                        >
-                            <Briefcase size={14} /> Voir Profil
-                        </button>
-                    )}
-                  </div>
+        </div>
+        <button 
+          onClick={handleLogout}
+          className="flex items-center gap-2 px-6 py-3 bg-white border border-red-100 text-red-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 transition-all shadow-sm"
+        >
+          <LogOut size={16} /> Déconnexion
+        </button>
+      </div>
 
-                  <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-gray-50/50">
-                     {/* Default Message / Empty State */}
-                     {(currentMessages.length === 0 || currentConversation?.isVirtual) && (
-                         <div className="text-center py-12 text-gray-400">
-                             <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                <MessageSquare className="text-gray-300" size={32} />
+      <div className="flex border-b border-gray-100 mb-10 sticky top-0 bg-gray-50/90 backdrop-blur-xl z-20 pt-2 no-scrollbar overflow-x-auto whitespace-nowrap">
+        {[
+          { id: 'bookings', label: 'Mes Réservations', icon: List },
+          { id: 'calendar', label: 'Calendrier', icon: Calendar },
+          { id: 'messages', label: 'Messagerie', icon: MessageSquare, badge: unreadCount },
+        ].map(tab => (
+          <button 
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as any)} 
+            className={`pb-5 px-8 font-black text-xs uppercase tracking-widest transition-all relative flex items-center gap-3 ${activeTab === tab.id ? 'text-brand-600' : 'text-gray-400 hover:text-gray-600'}`}
+          >
+            <tab.icon size={16} /> 
+            {tab.label} 
+            {tab.badge ? (
+              <span className="bg-brand-500 text-white text-[10px] h-4 min-w-[1rem] px-1.5 flex items-center justify-center rounded-full animate-pulse shadow-lg shadow-brand-100">
+                {tab.badge}
+              </span>
+            ) : null}
+            {activeTab === tab.id && <div className="absolute bottom-0 left-0 w-full h-1 bg-brand-600 rounded-t-full"></div>}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex-1 flex flex-col min-h-0">
+        {activeTab === 'bookings' && (
+          <div className="space-y-8 animate-fade-in">
+            {bookings.length > 0 && bookings.some(b => b.status === BookingStatus.PENDING) && (
+              <div className="bg-amber-50 border border-amber-100 p-6 rounded-[2rem] flex items-center gap-4 text-amber-700">
+                 <div className="p-3 bg-white rounded-xl shadow-sm"><AlertCircle size={20}/></div>
+                 <p className="text-[11px] font-bold uppercase tracking-widest leading-relaxed">Certaines de vos réservations sont en attente. Elles s'afficheront dans votre calendrier dès que l'hôte les aura validées.</p>
+              </div>
+            )}
+            
+            {bookings.length === 0 && (
+              <div className="text-center py-32 bg-white rounded-[3rem] border-2 border-dashed border-gray-100 flex flex-col items-center">
+                 <Compass size={48} className="text-brand-200 mb-4" />
+                 <p className="text-gray-400 font-bold text-xl uppercase tracking-widest">Aucune aventure à l'horizon</p>
+                 <button onClick={() => navigate('/')} className="mt-8 bg-gray-900 text-white px-10 py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:bg-brand-600 transition-all">
+                    Découvrir de nouvelles aventures
+                 </button>
+              </div>
+            )}
+            
+            <div className="space-y-6">
+              {bookings.map((booking) => (
+                <div key={booking.id} className="bg-white border border-gray-100 rounded-[2.5rem] p-8 flex flex-col lg:flex-row justify-between items-start lg:items-center shadow-sm hover:shadow-2xl transition-all duration-500 group">
+                  <div className="flex gap-8 items-center w-full lg:w-auto">
+                    <div className="h-28 w-28 rounded-[2rem] bg-gray-100 overflow-hidden flex-shrink-0 shadow-inner group-hover:scale-105 transition-transform duration-500">
+                      <img src={booking.experience?.images[0]} alt="thumb" className="w-full h-full object-cover" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-black text-gray-900 text-2xl mb-1 leading-tight group-hover:text-brand-600 transition-colors">{booking.experience?.title}</h3>
+                      <div className="text-xs flex items-center gap-1.5 mb-4">
+                        <span className="text-gray-400 font-bold uppercase tracking-widest">hôte</span>
+                        <button onClick={() => { setProfileData(getPartnerById(booking.experience.partnerId)); setProfileModalOpen(true); }} className="font-black text-brand-600 hover:underline">{booking.experience?.partnerName || "Partenaire"}</button>
+                      </div>
+                      <div className="flex flex-wrap items-center text-[10px] font-black text-gray-400 gap-3 uppercase tracking-widest">
+                        <span className="flex items-center gap-1.5 bg-gray-50 px-4 py-2 rounded-2xl"><Calendar size={12} className="text-brand-500" /> {booking.date}</span>
+                        <span className="flex items-center gap-1.5 bg-gray-50 px-4 py-2 rounded-2xl"><Clock size={12} className="text-brand-500" /> {booking.time}</span>
+                        <span className="flex items-center gap-1.5 bg-gray-50 px-4 py-2 rounded-2xl"><UserIcon size={12} className="text-brand-500" /> {booking.adults} Ad. {booking.children > 0 && `, ${booking.children} Enf.`}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-8 lg:mt-0 flex flex-col items-end gap-4 w-full lg:w-auto">
+                    <StatusBadge status={booking.status} />
+                    <div className="flex gap-3 w-full lg:w-auto">
+                        {booking.status === BookingStatus.COMPLETED && !booking.hasReviewed && (
+                          <button onClick={() => handleOpenReview(booking)} className="flex-1 bg-yellow-50 text-yellow-700 hover:bg-yellow-100 px-6 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all">
+                            <Star size={14} className="fill-yellow-600" /> Noter
+                          </button>
+                        )}
+                        {booking.status === BookingStatus.PENDING && (
+                          <button onClick={() => handleCancelBooking(booking.id)} className="flex-1 text-[10px] uppercase tracking-widest text-red-600 hover:bg-red-50 px-6 py-4 rounded-2xl font-black transition-all">Annuler</button>
+                        )}
+                        <button 
+                          onClick={() => { setSelectedConversationId(CONVERSATIONS.find(c => c.partnerId === booking.experience.partnerId)?.id || null); setActiveTab('messages'); }} 
+                          className="flex-1 bg-gray-900 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-black shadow-lg shadow-gray-200 transition-all"
+                        >
+                          <MessageSquare size={14} /> Contacter
+                        </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'calendar' && ( 
+          <div className="animate-fade-in flex-1">
+            <CalendarView 
+              bookings={bookings.filter(b => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.COMPLETED)} 
+              role={UserRole.CLIENT} 
+            />
+          </div> 
+        )}
+
+        {activeTab === 'messages' && (
+          <div className="bg-white border border-gray-100 rounded-[3rem] overflow-hidden shadow-sm flex flex-1 h-[calc(100vh-280px)] min-h-[600px] animate-fade-in">
+            {/* List */}
+            <div className={`w-full md:w-1/3 border-r bg-gray-50/50 flex flex-col overflow-hidden ${selectedConversationId ? 'hidden md:flex' : 'flex'}`}>
+               <div className="p-8 border-b bg-white">
+                  <h3 className="font-black text-2xl mb-4">Discussions</h3>
+                  <div className="relative">
+                     <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                     <input 
+                       type="text" 
+                       placeholder="Rechercher..." 
+                       value={searchTerm}
+                       onChange={(e) => setSearchTerm(e.target.value)}
+                       className="w-full bg-gray-100 border-none rounded-2xl py-3 pl-12 pr-4 text-sm font-bold outline-none focus:ring-2 focus:ring-brand-500 transition-all shadow-inner" 
+                     />
+                  </div>
+               </div>
+               <div className="flex-1 overflow-y-auto no-scrollbar">
+                  {filteredConversations.map(c => (
+                     <div 
+                      key={c.id} 
+                      onClick={() => setSelectedConversationId(c.id)}
+                      className={`p-6 border-b cursor-pointer transition-all ${selectedConversationId === c.id ? 'bg-white shadow-inner border-l-8 border-l-brand-600' : 'hover:bg-white/60'}`}
+                     >
+                       <div className="flex gap-5">
+                          <div className="h-14 w-14 rounded-[1.25rem] bg-brand-50 flex items-center justify-center font-black text-brand-600 text-xl shadow-sm flex-shrink-0">
+                             {c.partner.companyName[0]}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                             <div className="flex justify-between items-baseline mb-1">
+                                <h4 className={`font-black text-sm truncate uppercase tracking-tighter ${c.unreadCount > 0 ? 'text-gray-900' : 'text-gray-600'}`}>{c.partner.companyName}</h4>
+                                {c.unreadCount > 0 && <span className="bg-brand-500 h-2.5 w-2.5 rounded-full animate-pulse"></span>}
                              </div>
-                             <p className="font-medium text-gray-500">C'est le début de votre conversation</p>
-                             <p className="text-xs mt-1">N'hésitez pas à poser vos questions à {currentPartner?.companyName}.</p>
+                             <p className={`text-xs truncate ${c.unreadCount > 0 ? 'text-gray-900 font-black' : 'text-gray-400 font-medium'}`}>{c.lastMessage}</p>
+                          </div>
+                       </div>
+                     </div>
+                  ))}
+                  {filteredConversations.length === 0 && (
+                    <div className="p-10 text-center text-gray-400 text-xs font-bold uppercase tracking-widest">Aucune discussion</div>
+                  )}
+               </div>
+            </div>
+
+            {/* Chat Content */}
+            <div className={`flex-1 flex flex-col bg-white ${!selectedConversationId ? 'hidden md:flex' : 'flex'}`}>
+              {selectedConversationId && currentPartner ? (
+                 <>
+                   <div className="p-8 border-b flex items-center justify-between bg-white shadow-sm z-10">
+                      <div className="flex items-center gap-4">
+                         <button onClick={() => setSelectedConversationId(null)} className="md:hidden p-2 text-gray-400"><XCircle size={24}/></button>
+                         <div className="h-14 w-14 rounded-[1.25rem] bg-brand-50 flex items-center justify-center font-black text-brand-600 shadow-sm">{currentPartner.companyName[0]}</div>
+                         <div className="min-w-0">
+                            <h3 className="font-black text-xl leading-tight truncate">{currentPartner.companyName}</h3>
+                            <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">{currentPartner.city}</p>
                          </div>
-                     )}
-                     
-                     {currentMessages.map(m => (
-                        <div key={m.id} className={`flex ${m.senderId === user.id ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`flex flex-col ${m.senderId === user.id ? 'items-end' : 'items-start'} max-w-[70%]`}>
-                                <div className={`px-4 py-3 text-sm rounded-2xl shadow-sm ${
-                                    m.senderId === user.id 
-                                    ? 'bg-brand-600 text-white rounded-tr-none' 
-                                    : 'bg-white border text-gray-800 rounded-tl-none'
-                                }`}>
-                                   {m.content}
-                                </div>
-                                <div className={`text-[10px] mt-1 px-1 ${m.senderId === user.id ? 'text-gray-400' : 'text-gray-400'}`}>
-                                 {new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                      </div>
+                      <button onClick={() => { setProfileData(currentPartner); setProfileModalOpen(true); }} className="text-[10px] font-black uppercase tracking-widest bg-gray-50 px-6 py-2.5 rounded-2xl hover:bg-gray-100 transition-colors">Profil Hôte</button>
+                   </div>
+                   <div className="flex-1 overflow-y-auto p-10 space-y-6 bg-gray-50/20 no-scrollbar">
+                      {currentMessages.map(m => (
+                         <div key={m.id} className={`flex ${m.senderId === user.id ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[80%] px-8 py-5 rounded-[2.5rem] shadow-sm text-sm font-bold ${m.senderId === user.id ? 'bg-brand-600 text-white rounded-tr-none' : 'bg-white text-gray-800 rounded-tl-none border'}`}>
+                               {m.content}
+                               <div className={`text-[9px] mt-2 font-black uppercase tracking-widest ${m.senderId === user.id ? 'text-brand-200 text-right' : 'text-gray-400'}`}>
+                                  {new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                                </div>
                             </div>
-                        </div>
-                     ))}
-                     
-                     {/* Suggested Replies Chips */}
-                     {suggestedReplies.length > 0 && currentMessages.length > 0 && currentMessages[currentMessages.length-1].senderId !== user.id && (
-                        <div className="flex flex-wrap justify-end gap-2 mt-4 pt-2 border-t border-gray-100">
-                            {suggestedReplies.map((reply, idx) => (
-                                <button 
-                                    key={idx}
-                                    onClick={(e) => handleSendMessage(e, reply)}
-                                    className="text-xs bg-brand-50 hover:bg-brand-100 text-brand-700 px-3 py-1.5 rounded-full border border-brand-100 transition-colors"
-                                >
-                                    {reply}
-                                </button>
-                            ))}
-                        </div>
-                     )}
-                     
-                     <div ref={messagesEndRef} />
-                  </div>
-                  
-                  <div className="p-4 border-t bg-white">
-                     <form onSubmit={(e) => handleSendMessage(e)} className="flex gap-2 relative">
-                        <input 
-                          type="text" 
-                          value={messageInput}
-                          onChange={(e) => setMessageInput(e.target.value)}
-                          placeholder={currentConversation?.isVirtual ? "Démarrer la discussion..." : "Écrivez votre message..."}
-                          className="flex-1 bg-gray-100 border-transparent focus:bg-white border focus:ring-2 focus:ring-brand-500 rounded-full pl-5 pr-12 py-3 text-sm outline-none transition-all" 
-                        />
-                        <button 
-                            type="submit" 
-                            className={`absolute right-1 top-1 p-2 rounded-full text-white transition-all ${messageInput.trim() ? 'bg-brand-600 hover:bg-brand-700' : 'bg-gray-300 cursor-not-allowed'}`}
-                            disabled={!messageInput.trim()}
-                        >
-                          <Send size={18} />
-                        </button>
-                     </form>
-                  </div>
-                </>
+                         </div>
+                      ))}
+                      <div ref={messagesEndRef} />
+                   </div>
+                   <form onSubmit={handleSendMessage} className="p-10 border-t bg-white flex gap-5">
+                      <input 
+                        value={messageInput} 
+                        onChange={e => setMessageInput(e.target.value)}
+                        placeholder="Écrivez votre message..."
+                        className="flex-1 bg-gray-100 border-none rounded-[1.5rem] py-5 px-8 font-bold outline-none focus:ring-2 focus:ring-brand-500 transition-all shadow-inner"
+                      />
+                      <button type="submit" disabled={!messageInput.trim()} className="bg-brand-600 text-white p-5 rounded-[1.5rem] font-black disabled:opacity-50 shadow-xl shadow-brand-100 hover:scale-105 active:scale-95 transition-all"><Send size={24}/></button>
+                   </form>
+                 </>
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-gray-300 bg-white">
-                  <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                     <MessageSquare size={40} className="text-gray-300" />
-                  </div>
-                  <p className="font-medium text-gray-400">Sélectionnez une conversation pour commencer</p>
+                <div className="flex-1 flex flex-col items-center justify-center text-gray-200">
+                  <MessageSquare size={100} strokeWidth={1} className="mb-6 opacity-10" />
+                  <p className="font-black text-2xl opacity-10 uppercase tracking-widest">Choisissez une conversation</p>
                 </div>
               )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };
