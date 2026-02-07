@@ -19,12 +19,12 @@ const Home = () => {
   };
 
   const categories = [
-    { name: 'Aventure', img: './Photos/fabio-comparelli-uq2E2V4LhCY-unsplash.jpg', count: 12 },
-    { name: 'Culture', img: './Photos/photo-1519181245277-cffeb31da2e3.avif', count: 8 },
+    { name: 'Aventure', img: 'https://images.unsplash.com/photo-1501785888041-af3ef285b470', count: 12 },
+    { name: 'Culture', img: 'https://images.unsplash.com/photo-1548013146-72479768bada', count: 8 },
     { name: 'Gastronomie', img: 'https://images.unsplash.com/photo-1512149177596-f817c7ef5d4c?auto=format&fit=crop&w=600&q=80', count: 15 },
     { name: 'Désert', img: 'https://images.unsplash.com/photo-1539020140153-e479b8c22e70?auto=format&fit=crop&w=600&q=80', count: 5 },
     { name: 'Sport', img: 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&w=600&q=80', count: 10 },
-    { name: 'Bien-être', img: './Photos/premium_photo-1736781417960-d39858f2ce9c.avif', count: 7 }
+    { name: 'Bien-être', img: 'https://images.unsplash.com/photo-1600334129128-685c5582fd35', count: 7 }
   ];
 
   // Filtrage des expériences dont le partenaire est actif
